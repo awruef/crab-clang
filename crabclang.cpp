@@ -24,6 +24,52 @@ cl::opt<bool> Verbose("verbose",
                       cl::init(false),
                       cl::cat(CrabCat));
 
+template <typename T>
+class GenericAction : public ASTFrontendAction {
+public:
+  GenericAction() {} 
+
+  virtual std::unique_ptr<ASTConsumer>
+  CreateASTConsumer(CompilerInstance &Compiler, StringRef InFile) {
+    return std::unique_ptr<ASTConsumer>(new T(InFile, &Compiler.getASTContext()));
+  }
+};
+
+class GVisitor : public RecursiveASTVisitor<GVisitor> {
+private:
+	ASTContext *Ctx;
+public:
+	explicit GVisitor(ASTContext *C) : Ctx(C) {} 
+
+  bool VisitFunctionDecl(FunctionDecl *D) {
+		D->dump();
+
+    return true;
+  }
+};
+
+class CFGBuilderConsumer : public ASTConsumer {
+public:
+	explicit CFGBuilderConsumer(StringRef File, ASTContext *C) : Ctx(C), File(File) {}
+
+  virtual void HandleTranslationUnit(ASTContext &);
+
+private:
+	ASTContext *Ctx;
+	std::string	File;
+};
+
+void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
+  GVisitor	V(&C);
+
+  for (const auto &D : C.getTranslationUnitDecl()->decls()) 
+    V.TraverseDecl(D);
+
+  return;
+}
+
+typedef GenericAction<CFGBuilderConsumer> CFGBuildAction;
+
 int main(int argc, const char **argv) {
   sys::PrintStackTraceOnErrorSignal(argv[0]);
 
@@ -36,6 +82,13 @@ int main(int argc, const char **argv) {
   CommonOptionsParser OptionsParser(argc, argv, CrabCat);
   tooling::CommandLineArguments args = OptionsParser.getSourcePathList();
   ClangTool Tool(OptionsParser.getCompilations(), args);
+
+	std::unique_ptr<ToolAction>	Action = newFrontendActionFactory<CFGBuildAction>();
+
+  if (Action) 
+		Tool.run(Action.get());
+  else
+    llvm_unreachable("No action!");
 
   return 0;
 }
