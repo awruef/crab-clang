@@ -1,3 +1,6 @@
+
+CRAB_ROOT ?= /home/andrew/local/crabby
+
 CONFIG ?= llvm-config
 
 CXXFLAGS = $(shell $(CONFIG) --cxxflags)
@@ -9,7 +12,7 @@ LIBS = -lclangTooling -lclangFrontend -lclangDriver -lclangSerialization -lclang
 all: crabclang
 
 crabclang: crabclang.cpp 
-	$(CXX) -o crabclang crabclang.cpp $(CXXFLAGS) $(LDFLAGS) $(LIBS) $(LLVM_LIBS) $(SYSLIBS)
+	$(CXX) -o crabclang crabclang.cpp $(CXXFLAGS) -I$(CRAB_ROOT)/include $(LDFLAGS) $(LIBS) $(LLVM_LIBS) $(SYSLIBS)
 
 clean:
 	rm crabclang 

@@ -5,6 +5,7 @@
 #include <clang/Rewrite/Core/Rewriter.h>
 #include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Tooling.h>
+#include <clang/Analysis/CFG.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/Option/OptTable.h>
@@ -12,6 +13,9 @@
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Signals.h>
 #include <llvm/Support/TargetSelect.h>
+
+#include <crab/config.h>
+#include <crab/cfg/cfg.hpp>
 
 using namespace clang::driver;
 using namespace clang::tooling;
@@ -38,11 +42,26 @@ public:
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
 	ASTContext *Ctx;
+
+  // COnvert a clang expr into a crab expr. 
+
+  // Convert a clang statement into a crab statement.
+
+  // Convert a clang CFG into a crab CFG.
 public:
 	explicit GVisitor(ASTContext *C) : Ctx(C) {} 
 
   bool VisitFunctionDecl(FunctionDecl *D) {
-		D->dump();
+
+    if (D->hasBody() && D->isThisDeclarationADefinition()) {
+      CFG::BuildOptions BO;
+      std::unique_ptr<CFG>  cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
+
+      if (cfg ) {
+        cfg->dump(Ctx->getLangOpts(), true);
+
+      }
+    }
 
     return true;
   }
