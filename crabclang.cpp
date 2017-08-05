@@ -61,6 +61,75 @@ public:
   }
 };
 
+class EVisitor : public RecursiveASTVisitor<EVisitor> {
+  lin_t result;
+  variable_factory_t  &vfac;
+  public:
+
+  explicit EVisitor(variable_factory_t &v) : vfac(v) { }
+
+  bool VisitDeclRefExpr(DeclRefExpr *DRE) {
+    result = z_var(vfac[DRE->getDecl()->getNameAsString()]);
+    return false;
+  }
+
+  lin_t getResult() {
+    return result;
+  }
+};
+
+class SVisitor : public RecursiveASTVisitor<SVisitor> {
+  lin_cst_t           result;
+  variable_factory_t  &vfac;
+  public:
+
+  explicit SVisitor(variable_factory_t &v) : vfac(v) { }
+
+  bool VisitBinGT(BinaryOperator *op) {
+    EVisitor lhsv(vfac);
+    EVisitor rhsv(vfac);
+    lhsv.TraverseStmt(op->getLHS());
+    rhsv.TraverseStmt(op->getRHS());
+
+    result = (lhsv.getResult() - 1) >= rhsv.getResult();
+    return false;
+  }
+
+  bool VisitBinGE(BinaryOperator *op) {
+    EVisitor lhsv(vfac);
+    EVisitor rhsv(vfac);
+    lhsv.TraverseStmt(op->getLHS());
+    rhsv.TraverseStmt(op->getRHS());
+
+    result = lhsv.getResult() >= rhsv.getResult();
+    return false;
+  }
+
+  bool VisitBinLE(BinaryOperator *op) {
+    EVisitor lhsv(vfac);
+    EVisitor rhsv(vfac);
+    lhsv.TraverseStmt(op->getLHS());
+    rhsv.TraverseStmt(op->getRHS());
+
+    result = lhsv.getResult() <= rhsv.getResult();
+    return false;
+  }
+
+  bool VisitBinLT(BinaryOperator *op) {
+    EVisitor lhsv(vfac);
+    EVisitor rhsv(vfac);
+    lhsv.TraverseStmt(op->getLHS());
+    rhsv.TraverseStmt(op->getRHS());
+
+    result = lhsv.getResult() <= (rhsv.getResult() - 1);
+    return false;
+  }
+
+  lin_cst_t getResult() {
+    return result;
+  }
+};
+
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
 	ASTContext          *Ctx;
@@ -76,8 +145,12 @@ private:
   
   // Convert a clang type to a crab type. 
   variable_type clangToCrabTy(QualType T) const {
-
-    return INT_TYPE;
+    if (T->isPointerType())
+      return PTR_TYPE;
+    else if (T->isBooleanType())
+      return BOOL_TYPE;
+    else
+      return INT_TYPE;
   }
 
   // Convert a clang ParmVarDecl into a crab declaration pair. 
@@ -112,11 +185,38 @@ private:
     // Iterate over the clang CFG, adding statements as appropriate. 
     for (const auto &b : *cfg) {
       basic_block_t &cur = c->get_node(label(*b));
-     
+
+      // Iterate over the statements in the clang CFG.
+      
+      // Get the terminator statement from the clang CFG. 
+      Stmt *Term = b->getTerminatorCondition(true);
+      SVisitor TermSV(vfac);
+      if (Term) 
+        TermSV.TraverseStmt(Term);
+
+      bool didIf = false;
+      bool didElse = false;
       // Update the structure of the CFG, with branches. 
       for (const auto &s : b->succs()) {
         basic_block_t &sb = c->get_node(label(*s));
         cur >> sb;
+
+        // Is this successor the true or the false case? 
+        // If it's the true case, assume the terminator. 
+        // If it's the false case, assume the negation of the terminator.
+        if (Term) {
+          lin_cst_t TermConstraint = TermSV.getResult();
+
+          if (didIf == false) {
+            didIf = true;
+            sb.assume(TermConstraint);
+          } else if (didElse == false) {
+            didElse = false;
+            sb.assume(TermConstraint.negate());
+          } else {
+            llvm_unreachable("Don't deal with more than two successors right now.");
+          }
+        }
       }
     }
 

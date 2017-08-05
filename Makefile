@@ -3,11 +3,11 @@ CRAB_ROOT ?= /home/andrew/local/crabby
 
 CONFIG ?= llvm-config
 
-CXXFLAGS = $(shell $(CONFIG) --cxxflags)
+CXXFLAGS = $(shell $(CONFIG) --cxxflags) -g -ggdb
 LDFLAGS = $(shell $(CONFIG) --ldflags) -L$(CRAB_ROOT)/lib
 LLVM_LIBS = $(shell $(CONFIG) --libs)
 SYSLIBS = $(shell $(CONFIG) --system-libs)
-LIBS = -lclangTooling -lclangFrontend -lclangDriver -lclangSerialization -lclangParse -lclangSema -lclangAnalysis -lclangAST -lclangEdit -lclangLex -lclangCodeGen -lclangBasic -lCrab
+LIBS = -lclangTooling -lclangFrontend -lclangDriver -lclangSerialization -lclangParse -lclangSema -lclangAnalysis -lclangAST -lclangEdit -lclangLex -lclangCodeGen -lclangBasic -lCrab -lgmp
 
 all: crabclang
 
