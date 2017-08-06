@@ -58,17 +58,22 @@ we're that worse off.
 # progress?
 
 Very skeletal so far. We are exploring how to represent the AST in CRAB. 
-Right now, it doesn't work. 
+Right now, it only works for the ludicrously simple example program. 
 
 # immediate to-do?
 
-1. Need to change the CFG building process so that we create variables for 
-   each of the return values, and we translate return statements into 
-   assignments to those return values. Return statements should occur in 
-   blocks that branch to the exit block. Finally, the exit block needs to
-   return all of the return variables defined in the entry block. 
-2. The organization of visitors is a catastrophe. I'm not totally sure what
+1. The organization of visitors is a catastrophe. I'm not totally sure what
    to do between the distinction between a CRAB _constraint_ and a CRAB
    _expression_. It seems like sometimes, you want to run an _expression_
    down to a temporary that holds the results, and other times, you want 
    to translate a _statement_ into modifications on a basic block. 
+2. To compound this catastrophe-ness, when you're iterating over the contents
+   of a `CFGBlock` the `Stmt`'s are all `const` qualified and the 
+   `RecursiveASTVisitor` isn't. So, there will need to be a recursive function 
+   that _is_ `const` qualified (right now it's a function named `walkStmt`) 
+   that will do a recursive traversal of `Stmt` into CRAB CFG. 
+3. The `assume` generation needs to be different. If there's a branch in block
+   *A* and that branch calculates a bunch of intermediate stuff (say like, 
+   `f() < g()`) then the code for calculation needs to be in block *A* and 
+   the assumes need to be in terms of the temporaries produced by the 
+   calculation. 

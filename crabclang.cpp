@@ -78,27 +78,6 @@ class EVisitor : public RecursiveASTVisitor<EVisitor> {
   }
 };
 
-class BVisitor : public RecursiveASTVisitor<BVisitor> {
-  basic_block_t                                     &cur;
-  variable_factory_t                                &vars;
-  std::vector<std::pair<varname_t,variable_type> >  &rparams; 
-  public:
-    explicit BVisitor(variable_factory_t &v, basic_block_t &c,std::vector<std::pair<varname_t,variable_type>> &r) : cur(c),vars(v),rparams(r) { }
-
-    bool VisitReturnStmt(ReturnStmt *R) {
-    
-      if (Expr *E = R->getRetValue()) {
-        EVisitor v(vars);
-        v.TraverseStmt(E);
-        lin_t vn = v.getResult();
-        crab::outs() << vn << "\n";
-      } else {
-      }
-
-      return false;
-    }
-};
-
 class SVisitor : public RecursiveASTVisitor<SVisitor> {
   lin_cst_t           result;
   variable_factory_t  &vfac;
@@ -151,6 +130,21 @@ class SVisitor : public RecursiveASTVisitor<SVisitor> {
   }
 };
 
+void walkStmt(const Stmt *S, variable_factory_t &vf, basic_block_t &b) {
+  if (const ReturnStmt *RS = dyn_cast<ReturnStmt>(S)) {
+    // Return statement case. 
+    if (const Expr *E = RS->getRetValue()) {
+      if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E->IgnoreParenImpCasts())) {
+        z_var nv = vf[DRE->getDecl()->getNameAsString()];
+        z_var rv = vf["__CRAB_return"];
+        b.assign(rv, nv);
+      }
+    }
+  } else {
+    llvm_unreachable("Unsupported statement");
+  }
+}
+
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
 	ASTContext          *Ctx;
@@ -170,8 +164,11 @@ private:
       return PTR_TYPE;
     else if (T->isBooleanType())
       return BOOL_TYPE;
-    else
+    else if (T->isIntegerType())
       return INT_TYPE;
+    else
+      return UNK_TYPE;
+
   }
 
   // Convert a clang ParmVarDecl into a crab declaration pair. 
@@ -180,10 +177,15 @@ private:
       (vfac[pvd->getNameAsString()], clangToCrabTy(pvd->getType()));
   }
 
+  std::pair<varname_t, variable_type> toR(QualType returnType) {
+    return std::pair<varname_t, variable_type>
+      (vfac["__CRAB_return"], clangToCrabTy(returnType)); 
+  }
+
   // Convert a clang CFG into a crab CFG.
   std::shared_ptr<cfg_t> 
     toCrab( std::unique_ptr<CFG>      &cfg,
-            std::string               name,
+            FunctionDecl              *FD,
             std::vector<ParmVarDecl*> params) 
   {
     std::vector<std::pair<varname_t,variable_type> >  cparams;
@@ -192,14 +194,24 @@ private:
     for (const auto &p : params) 
       cparams.push_back(toP(p));
 
-    // Create an initial cfg with entry and exit nodes. 
+    // For now, CRAB functions only return the values their C versions do.
+    std::pair<varname_t, variable_type> returnV = toR(FD->getReturnType());
+    rparams.push_back(returnV);
+
     CFGBlock  &entry = cfg->getEntry();
     CFGBlock  &exit = cfg->getExit();
-    std::shared_ptr<cfg_t>  c(new cfg_t(label(entry), label(exit)/*,decl*/));
+    std::shared_ptr<cfg_t>  c(new cfg_t(label(entry), label(exit)));
 
     // One pass to make new blocks in the crab cfg. 
     for (const auto &b : *cfg) 
       c->insert(label(*b));
+
+    // Create the initial structure: havoc the return values, and return them
+    // at the end of the crab CFG.     
+    basic_block_t &crab_entry = c->get_node(label(entry));
+    basic_block_t &crab_exit = c->get_node(label(exit));
+    crab_entry.havoc(returnV.first);
+    crab_exit.ret(returnV.first, returnV.second);
 
     // Iterate over the clang CFG, adding statements as appropriate. 
     for (auto &b : *cfg) {
@@ -211,25 +223,6 @@ private:
       if (Term) 
         TermSV.TraverseStmt(Term);
       
-      // Iterate over the statements in the current node. 
-
-      for (auto &s : *b) {
-        Stmt *St = nullptr;
-        switch(s.getKind()) {
-          case CFGElement::Statement:
-            St = const_cast<Stmt*>(s.castAs<CFGStmt>().getStmt());
-            if (St != b->getTerminator()) {
-              // If the statement isn't the terminator statement, 
-              // add it to the basic block via yet another visitor. 
-              BVisitor b(vfac, cur, rparams);
-              b.TraverseStmt(St);
-            }
-            break;
-          default:
-            llvm_unreachable("Unsupported CFGElement type");
-        }
-      }
-
       bool didIf = false;
       bool didElse = false;
       // Update the structure of the CFG, with branches. 
@@ -256,7 +249,27 @@ private:
       }
     }
 
-    function_decl<varname_t>  decl(vfac[name], cparams, rparams);
+    for (auto &b : *cfg) {
+      basic_block_t &cur = c->get_node(label(*b));
+      // Iterate over the statements in the current node. 
+      for (auto &s : *b) {
+        const Stmt *St = nullptr;
+        switch(s.getKind()) {
+          case CFGElement::Statement:
+            St = s.castAs<CFGStmt>().getStmt();
+            // It would be super nice to be able to use a RecursiveASTVisitor 
+            // here, however, we can't strip the const off of St without 
+            // bad stuff happening and the visitors aren't const. 
+            walkStmt(St, vfac, cur);
+            break;
+          default:
+            llvm_unreachable("Unsupported CFGElement type");
+        }
+      }
+    }
+
+
+    function_decl<varname_t>  decl(vfac[FD->getNameAsString()], cparams, rparams);
     c->set_func_decl(decl);
     return c;
   } 
@@ -274,7 +287,7 @@ public:
       if (cfg ) {
         cfg->dump(Ctx->getLangOpts(), true);
         std::shared_ptr<cfg_t>  crabCfg = toCrab( cfg, 
-                                                  D->getNameAsString(), 
+                                                  D, 
                                                   D->parameters());
 
         crab::outs() << *crabCfg;
