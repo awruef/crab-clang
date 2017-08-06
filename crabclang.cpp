@@ -78,6 +78,27 @@ class EVisitor : public RecursiveASTVisitor<EVisitor> {
   }
 };
 
+class BVisitor : public RecursiveASTVisitor<BVisitor> {
+  basic_block_t                                     &cur;
+  variable_factory_t                                &vars;
+  std::vector<std::pair<varname_t,variable_type> >  &rparams; 
+  public:
+    explicit BVisitor(variable_factory_t &v, basic_block_t &c,std::vector<std::pair<varname_t,variable_type>> &r) : cur(c),vars(v),rparams(r) { }
+
+    bool VisitReturnStmt(ReturnStmt *R) {
+    
+      if (Expr *E = R->getRetValue()) {
+        EVisitor v(vars);
+        v.TraverseStmt(E);
+        lin_t vn = v.getResult();
+        crab::outs() << vn << "\n";
+      } else {
+      }
+
+      return false;
+    }
+};
+
 class SVisitor : public RecursiveASTVisitor<SVisitor> {
   lin_cst_t           result;
   variable_factory_t  &vfac;
@@ -165,34 +186,49 @@ private:
             std::string               name,
             std::vector<ParmVarDecl*> params) 
   {
-    std::vector<std::pair<varname_t,variable_type> > cparams;
+    std::vector<std::pair<varname_t,variable_type> >  cparams;
+    std::vector<std::pair<varname_t,variable_type> >  rparams; 
 
     for (const auto &p : params) 
       cparams.push_back(toP(p));
 
-    // Create a function decl. 
-    function_decl<varname_t>  decl(crab::INT_TYPE, vfac[name], cparams);
-
     // Create an initial cfg with entry and exit nodes. 
     CFGBlock  &entry = cfg->getEntry();
     CFGBlock  &exit = cfg->getExit();
-    std::shared_ptr<cfg_t>  c(new cfg_t(label(entry), label(exit), decl));
+    std::shared_ptr<cfg_t>  c(new cfg_t(label(entry), label(exit)/*,decl*/));
 
     // One pass to make new blocks in the crab cfg. 
     for (const auto &b : *cfg) 
       c->insert(label(*b));
 
     // Iterate over the clang CFG, adding statements as appropriate. 
-    for (const auto &b : *cfg) {
+    for (auto &b : *cfg) {
       basic_block_t &cur = c->get_node(label(*b));
 
-      // Iterate over the statements in the clang CFG.
-      
       // Get the terminator statement from the clang CFG. 
       Stmt *Term = b->getTerminatorCondition(true);
       SVisitor TermSV(vfac);
       if (Term) 
         TermSV.TraverseStmt(Term);
+      
+      // Iterate over the statements in the current node. 
+
+      for (auto &s : *b) {
+        Stmt *St = nullptr;
+        switch(s.getKind()) {
+          case CFGElement::Statement:
+            St = const_cast<Stmt*>(s.castAs<CFGStmt>().getStmt());
+            if (St != b->getTerminator()) {
+              // If the statement isn't the terminator statement, 
+              // add it to the basic block via yet another visitor. 
+              BVisitor b(vfac, cur, rparams);
+              b.TraverseStmt(St);
+            }
+            break;
+          default:
+            llvm_unreachable("Unsupported CFGElement type");
+        }
+      }
 
       bool didIf = false;
       bool didElse = false;
@@ -220,6 +256,8 @@ private:
       }
     }
 
+    function_decl<varname_t>  decl(vfac[name], cparams, rparams);
+    c->set_func_decl(decl);
     return c;
   } 
 

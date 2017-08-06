@@ -1,5 +1,5 @@
 
-CRAB_ROOT ?= /home/andrew/local/crabby
+CRAB_ROOT ?= /home/andrew/local/crab
 
 CONFIG ?= llvm-config
 
