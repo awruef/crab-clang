@@ -228,7 +228,10 @@ private:
       // Update the structure of the CFG, with branches. 
       for (const auto &s : b->succs()) {
         basic_block_t &sb = c->get_node(label(*s));
-        cur >> sb;
+        basic_block_t &assume_b = c->insert(label(*b) + "_to_" + label(*s));
+
+        cur >> assume_b;
+        assume_b >> sb;
 
         // Is this successor the true or the false case? 
         // If it's the true case, assume the terminator. 
@@ -238,10 +241,10 @@ private:
 
           if (didIf == false) {
             didIf = true;
-            sb.assume(TermConstraint);
+            assume_b.assume(TermConstraint);
           } else if (didElse == false) {
             didElse = false;
-            sb.assume(TermConstraint.negate());
+            assume_b.assume(TermConstraint.negate());
           } else {
             llvm_unreachable("Don't deal with more than two successors right now.");
           }
