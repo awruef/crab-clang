@@ -77,3 +77,12 @@ Right now, it only works for the ludicrously simple example program.
    `f() < g()`) then the code for calculation needs to be in block *A* and 
    the assumes need to be in terms of the temporaries produced by the 
    calculation. 
+
+   One way to deal with this that I thought of today: as a pre-pass, identify 
+   all basic blocks that are the target of a branch, and create pre versions of
+   those basic blocks only to hold assume statements. Actually, this doesn't need
+   to be done as a pre-pass, it could probably be done during the insertion of
+   the assume statements. At the point when the assume statements are being 
+   generated, we're in block _A_ with succs _B_ and _C_. Create block _B'_ and 
+   _C'_, and make _A_ branch to _B'_ and _C'_. Put `assume` statements into 
+   _B'_ and _C'_, then have _B'_ branch to _B_ and _C'_ branch to _C_. 
