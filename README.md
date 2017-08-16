@@ -86,3 +86,5 @@ Right now, it only works for the ludicrously simple example program.
    generated, we're in block _A_ with succs _B_ and _C_. Create block _B'_ and 
    _C'_, and make _A_ branch to _B'_ and _C'_. Put `assume` statements into 
    _B'_ and _C'_, then have _B'_ branch to _B_ and _C'_ branch to _C_. 
+4. How to deal with variable-width integers? It seems like this is something
+   that we need to push down into the domain. 

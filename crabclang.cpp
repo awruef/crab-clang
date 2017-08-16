@@ -43,6 +43,7 @@ using namespace llvm;
 using namespace crab;
 using namespace crab::cfg_impl;
 using namespace crab::cfg;
+using namespace ikos;
 
 static cl::OptionCategory CrabCat("crabclang options");
 cl::opt<bool> Verbose("verbose",
@@ -130,15 +131,62 @@ class SVisitor : public RecursiveASTVisitor<SVisitor> {
   }
 };
 
-void walkStmt(const Stmt *S, variable_factory_t &vf, basic_block_t &b) {
-  if (const ReturnStmt *RS = dyn_cast<ReturnStmt>(S)) {
+// Many exprs produce temporaries. Those temporaries should be reflected as 
+// variables in the CRAB CFG. Destruct an expr, E, and create temporaries
+// and operations on those temporaries as appropriate. 
+lin_t makeVarForExpr(const Expr *E, unsigned &curVn, variable_factory_t &vf, basic_block_t &b) {
+  // Destruct E and figure out what we need to do for it. 
+  // This is basically a visitor pattern, but for const expr. 
+  std::ostringstream  oss;
+  std::string         vn;
+  lin_t               v;
+  
+  if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(E)) {
+    // Construct a binary operation from lhs, rhs of BO. 
+    lin_t lhs = makeVarForExpr(BO->getLHS()->IgnoreParenImpCasts(), curVn, vf, b);
+    lin_t rhs = makeVarForExpr(BO->getRHS()->IgnoreParenImpCasts(), curVn, vf, b);
+    oss << curVn++ << "_temp";
+    vn = oss.str();
+    z_var   var(vf[vn]);
+    v = lin_t(var);
+
+    switch(BO->getOpcode()) {
+      case BO_Add:
+        b.assign(var, lhs + rhs);
+        break;
+      case BO_Sub:
+        b.assign(var, lhs - rhs);
+        break;
+      default:
+        llvm_unreachable("Unsupported opcode!");
+    } 
+  } 
+  else if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E)) {
+    // Look up the variable referenced by DRE, and give it back. 
+    v = lin_t(z_var(vf[DRE->getDecl()->getNameAsString()]));
+  } 
+  else if (const IntegerLiteral *IL = dyn_cast<IntegerLiteral>(E)) {
+    // Give back the constant value by converting the APInt to an mpz. 
+    v = lin_t(z_number(IL->getValue().getSExtValue()));
+  }
+  else if (const CallExpr *CE = dyn_cast<CallExpr>(E)) {
+    // Look up the symbol we're calling. 
+    llvm_unreachable("Not Implemented");
+  }
+  else {
+    llvm_unreachable("Not Implemented");
+  }
+
+  return v;
+}
+
+void walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_block_t &b) {
+  if (const ReturnStmt *RS = dyn_cast<const ReturnStmt>(S)) {
     // Return statement case. 
     if (const Expr *E = RS->getRetValue()) {
-      if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E->IgnoreParenImpCasts())) {
-        z_var nv = vf[DRE->getDecl()->getNameAsString()];
-        z_var rv = vf["__CRAB_return"];
-        b.assign(rv, nv);
-      }
+      lin_t v = makeVarForExpr(E->IgnoreParenImpCasts(), curvn, vf, b);
+      z_var rv = vf["__CRAB_return"];
+      b.assign(vf["__CRAB_return"], v);
     }
   } else {
     llvm_unreachable("Unsupported statement");
@@ -188,6 +236,7 @@ private:
             FunctionDecl              *FD,
             std::vector<ParmVarDecl*> params) 
   {
+    unsigned                                          varPrefix = 0;
     std::vector<std::pair<varname_t,variable_type> >  cparams;
     std::vector<std::pair<varname_t,variable_type> >  rparams; 
 
@@ -222,7 +271,14 @@ private:
       SVisitor TermSV(vfac);
       if (Term) 
         TermSV.TraverseStmt(Term);
-      
+
+      // Walk the statements in this node. 
+      for (auto &s : *b) 
+        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
+          // Skip terminators, since we deal with them separately (for now).
+          if (orStmt.getValue().getStmt() != b->getTerminatorCondition(false))
+            walkStmt(orStmt.getValue().getStmt(), varPrefix, vfac, cur);
+ 
       bool didIf = false;
       bool didElse = false;
       // Update the structure of the CFG, with branches. 
@@ -236,6 +292,7 @@ private:
         // Is this successor the true or the false case? 
         // If it's the true case, assume the terminator. 
         // If it's the false case, assume the negation of the terminator.
+        // Note that these invariants come from clang itself. 
         if (Term) {
           lin_cst_t TermConstraint = TermSV.getResult();
 
@@ -251,26 +308,6 @@ private:
         }
       }
     }
-
-    for (auto &b : *cfg) {
-      basic_block_t &cur = c->get_node(label(*b));
-      // Iterate over the statements in the current node. 
-      for (auto &s : *b) {
-        const Stmt *St = nullptr;
-        switch(s.getKind()) {
-          case CFGElement::Statement:
-            St = s.castAs<CFGStmt>().getStmt();
-            // It would be super nice to be able to use a RecursiveASTVisitor 
-            // here, however, we can't strip the const off of St without 
-            // bad stuff happening and the visitors aren't const. 
-            walkStmt(St, vfac, cur);
-            break;
-          default:
-            llvm_unreachable("Unsupported CFGElement type");
-        }
-      }
-    }
-
 
     function_decl<varname_t>  decl(vfac[FD->getNameAsString()], cparams, rparams);
     c->set_func_decl(decl);
@@ -288,12 +325,13 @@ public:
       std::unique_ptr<CFG>  cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
 
       if (cfg ) {
-        cfg->dump(Ctx->getLangOpts(), true);
+        if (Verbose)
+          cfg->dump(Ctx->getLangOpts(), true);
         std::shared_ptr<cfg_t>  crabCfg = toCrab( cfg, 
                                                   D, 
                                                   D->parameters());
-
-        crab::outs() << *crabCfg;
+        if (Verbose)
+          crab::outs() << *crabCfg;
       }
     }
 
