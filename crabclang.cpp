@@ -18,11 +18,16 @@
 #include <crab/cfg/cfg.hpp>
 #include <crab/cfg/var_factory.hpp>
 
+#include <crab/domains/split_dbm.hpp>
+#include <crab/domains/intervals.hpp>
+
+#include <crab/analysis/fwd_analyzer.hpp>
+
 // Define types for crab. 
 namespace crab {
+  typedef cfg::var_factory_impl::str_variable_factory variable_factory_t;
+  typedef typename variable_factory_t::varname_t varname_t;
   namespace cfg_impl {
-    typedef cfg::var_factory_impl::str_variable_factory variable_factory_t;
-    typedef typename variable_factory_t::varname_t varname_t;
     typedef std::string basic_block_label_t;
     template<> inline std::string get_label_str(std::string e) { return e; }
 
@@ -33,6 +38,15 @@ namespace crab {
     typedef ikos::variable<ikos::z_number, varname_t> z_var;
     typedef ikos::linear_expression<ikos::z_number, varname_t> lin_t;
     typedef ikos::linear_constraint<ikos::z_number, varname_t> lin_cst_t;
+
+  }
+
+  namespace domains { 
+    typedef interval_domain<ikos::z_number,varname_t> z_interval_domain_t;
+  }
+
+  namespace analyzer {
+    typedef intra_fwd_analyzer<cfg_impl::cfg_ref_t, domains::z_interval_domain_t> num_analyzer_t;
   }
 }
 
@@ -43,6 +57,7 @@ using namespace llvm;
 using namespace crab;
 using namespace crab::cfg_impl;
 using namespace crab::cfg;
+using namespace crab::domains;
 using namespace ikos;
 
 static cl::OptionCategory CrabCat("crabclang options");
@@ -195,8 +210,9 @@ void walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_bloc
 
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
-	ASTContext          *Ctx;
-  variable_factory_t  vfac;
+	ASTContext                        *Ctx;
+  variable_factory_t                vfac;
+  std::set<std::shared_ptr<cfg_t>>  cfgs;
 
   // Make a string label for a basic block.
   std::string label(const CFGBlock &b) const {
@@ -332,11 +348,15 @@ public:
                                                   D->parameters());
         if (Verbose)
           crab::outs() << *crabCfg;
+
+        cfgs.insert(crabCfg);
       }
     }
 
     return true;
   }
+
+  std::set<std::shared_ptr<cfg_t>> getCfgs() { return cfgs; }
 };
 
 class CFGBuilderConsumer : public ASTConsumer {
@@ -353,8 +373,24 @@ private:
 void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
   GVisitor	V(&C);
 
+  // Build up CFG. 
   for (const auto &D : C.getTranslationUnitDecl()->decls()) 
     V.TraverseDecl(D);
+
+  // Run analyzer. 
+  for (auto &c : V.getCfgs()) {
+    analyzer::num_analyzer_t a(*c, z_interval_domain_t::top()); 
+    a.run();
+
+    for (auto &b : *c) {
+			auto pre = a.get_pre (b.label ());
+    	auto post = a.get_post (b.label ());
+     	crab::outs() << get_label_str (b.label ()) << "="
+               << pre
+               << " ==> "
+               << post << "\n";
+    }
+  }
 
   return;
 }
