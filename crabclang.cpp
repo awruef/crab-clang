@@ -23,6 +23,8 @@
 
 #include <crab/analysis/fwd_analyzer.hpp>
 
+#include <boost/variant.hpp>
+
 // Define types for crab. 
 namespace crab {
   typedef cfg::var_factory_impl::str_variable_factory variable_factory_t;
@@ -77,112 +79,78 @@ public:
   }
 };
 
-class EVisitor : public RecursiveASTVisitor<EVisitor> {
-  lin_t result;
-  variable_factory_t  &vfac;
-  public:
+typedef boost::variant<boost::blank, lin_t, lin_cst_t> CResult;
+typedef enum _CResultI {
+  EMPTY,
+  EXPR,
+  CONSTRAINT
+} CResultI;
 
-  explicit EVisitor(variable_factory_t &v) : vfac(v) { }
-
-  bool VisitDeclRefExpr(DeclRefExpr *DRE) {
-    result = z_var(vfac[DRE->getDecl()->getNameAsString()]);
-    return false;
-  }
-
-  lin_t getResult() {
-    return result;
-  }
-};
-
-class SVisitor : public RecursiveASTVisitor<SVisitor> {
-  lin_cst_t           result;
-  variable_factory_t  &vfac;
-  public:
-
-  explicit SVisitor(variable_factory_t &v) : vfac(v) { }
-
-  bool VisitBinGT(BinaryOperator *op) {
-    EVisitor lhsv(vfac);
-    EVisitor rhsv(vfac);
-    lhsv.TraverseStmt(op->getLHS());
-    rhsv.TraverseStmt(op->getRHS());
-
-    result = (lhsv.getResult() - 1) >= rhsv.getResult();
-    return false;
-  }
-
-  bool VisitBinGE(BinaryOperator *op) {
-    EVisitor lhsv(vfac);
-    EVisitor rhsv(vfac);
-    lhsv.TraverseStmt(op->getLHS());
-    rhsv.TraverseStmt(op->getRHS());
-
-    result = lhsv.getResult() >= rhsv.getResult();
-    return false;
-  }
-
-  bool VisitBinLE(BinaryOperator *op) {
-    EVisitor lhsv(vfac);
-    EVisitor rhsv(vfac);
-    lhsv.TraverseStmt(op->getLHS());
-    rhsv.TraverseStmt(op->getRHS());
-
-    result = lhsv.getResult() <= rhsv.getResult();
-    return false;
-  }
-
-  bool VisitBinLT(BinaryOperator *op) {
-    EVisitor lhsv(vfac);
-    EVisitor rhsv(vfac);
-    lhsv.TraverseStmt(op->getLHS());
-    rhsv.TraverseStmt(op->getRHS());
-
-    result = lhsv.getResult() <= (rhsv.getResult() - 1);
-    return false;
-  }
-
-  lin_cst_t getResult() {
-    return result;
-  }
-};
+// Make a temporary variable name based on the current number and a 
+// specified base name. 
+std::string mkTempVarName(unsigned &curVn, std::string baseName) {
+  std::ostringstream oss;
+  oss << curVn++ << baseName;
+  return oss.str();
+}
 
 // Many exprs produce temporaries. Those temporaries should be reflected as 
 // variables in the CRAB CFG. Destruct an expr, E, and create temporaries
 // and operations on those temporaries as appropriate. 
-lin_t makeVarForExpr(const Expr *E, unsigned &curVn, variable_factory_t &vf, basic_block_t &b) {
+CResult makeVarForExpr(const Expr *E, unsigned &curVn, variable_factory_t &vf, basic_block_t &b) {
   // Destruct E and figure out what we need to do for it. 
   // This is basically a visitor pattern, but for const expr. 
-  std::ostringstream  oss;
-  std::string         vn;
   lin_t               v;
+  CResult             res;
   
   if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(E)) {
     // Construct a binary operation from lhs, rhs of BO. 
-    lin_t lhs = makeVarForExpr(BO->getLHS()->IgnoreParenImpCasts(), curVn, vf, b);
-    lin_t rhs = makeVarForExpr(BO->getRHS()->IgnoreParenImpCasts(), curVn, vf, b);
-    oss << curVn++ << "_temp";
-    vn = oss.str();
-    z_var   var(vf[vn]);
-    v = lin_t(var);
+    CResult lhs = makeVarForExpr(BO->getLHS()->IgnoreParenImpCasts(), curVn, vf, b);
+    CResult rhs = makeVarForExpr(BO->getRHS()->IgnoreParenImpCasts(), curVn, vf, b);
 
-    switch(BO->getOpcode()) {
-      case BO_Add:
-        b.assign(var, lhs + rhs);
-        break;
-      case BO_Sub:
-        b.assign(var, lhs - rhs);
-        break;
-      default:
-        llvm_unreachable("Unsupported opcode!");
-    } 
+    z_var   var(vf[mkTempVarName(curVn, "_temp")]);
+    v =     lin_t(var);
+
+    if ((lhs.which() == EXPR) && (rhs.which() == EXPR)) {
+      lin_t lhse = boost::get<lin_t>(lhs);
+      lin_t rhse = boost::get<lin_t>(rhs);
+
+      switch(BO->getOpcode()) {
+        case BO_Add:
+          b.assign(var, lhse + rhse);
+          res = CResult(v);
+          break;
+        case BO_Sub:
+          b.assign(var, lhse - rhse);
+          res = CResult(v);
+          break;
+        // In these cases, we make whole constraints instead of expressions. 
+        case BO_LT:
+          res = CResult(lhse <= (rhse-1));
+          break;
+        case BO_LE:
+          res = CResult(lhse <= rhse);
+          break;
+        case BO_GT:
+          res = CResult((lhse-1) >= rhse);
+          break;
+        case BO_GE:
+          res = CResult(lhse >= rhse);
+          break;
+        default:
+          llvm_unreachable("Unsupported opcode!");
+      } 
+    } else {
+      llvm_unreachable("Unsupported lhs/rhs operand types!");
+    }
   } 
   else if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E)) {
     // Look up the variable referenced by DRE, and give it back. 
-    v = lin_t(z_var(vf[DRE->getDecl()->getNameAsString()]));
+    res = CResult(lin_t(z_var(vf[DRE->getDecl()->getNameAsString()])));
   } 
   else if (const IntegerLiteral *IL = dyn_cast<IntegerLiteral>(E)) {
     // Give back the constant value by converting the APInt to an mpz. 
-    v = lin_t(z_number(IL->getValue().getSExtValue()));
+    res = CResult(lin_t(z_number(IL->getValue().getSExtValue())));
   }
   else if (const CallExpr *CE = dyn_cast<CallExpr>(E)) {
     // Look up the symbol we're calling. 
@@ -192,20 +160,32 @@ lin_t makeVarForExpr(const Expr *E, unsigned &curVn, variable_factory_t &vf, bas
     llvm_unreachable("Not Implemented");
   }
 
-  return v;
+  return res;
 }
 
-void walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_block_t &b) {
+CResult walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_block_t &b) {
+  CResult res; 
   if (const ReturnStmt *RS = dyn_cast<const ReturnStmt>(S)) {
     // Return statement case. 
     if (const Expr *E = RS->getRetValue()) {
-      lin_t v = makeVarForExpr(E->IgnoreParenImpCasts(), curvn, vf, b);
-      z_var rv = vf["__CRAB_return"];
-      b.assign(vf["__CRAB_return"], v);
+      CResult v = makeVarForExpr(E->IgnoreParenImpCasts(), curvn, vf, b);
+      if (v.which() == EXPR) {
+        z_var rv = vf["__CRAB_return"];
+        b.assign(vf["__CRAB_return"], boost::get<lin_t>(v));
+      } else {
+        llvm_unreachable("Did not get expr from a return values expr!");
+      }
     }
+  } else if (const IfStmt *I = dyn_cast<const IfStmt>(S)) {
+    // Just do the guard, for now. 
+  } else if (const BinaryOperator *BO = dyn_cast<const BinaryOperator>(S)) {
+    return makeVarForExpr(BO, curvn, vf, b);
   } else {
+    S->dump();
     llvm_unreachable("Unsupported statement");
   }
+
+  return res;
 }
 
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
@@ -284,9 +264,15 @@ private:
 
       // Get the terminator statement from the clang CFG. 
       Stmt *Term = b->getTerminatorCondition(true);
-      SVisitor TermSV(vfac);
-      if (Term) 
-        TermSV.TraverseStmt(Term);
+      lin_cst_t TermConstraint;
+      if (Term) {
+        CResult r = walkStmt(Term, varPrefix, vfac, cur);
+
+        if (r.which() == CONSTRAINT) 
+          TermConstraint = boost::get<lin_cst_t>(r);
+        else 
+          llvm_unreachable("Should have got a constraint!");
+      }
 
       // Walk the statements in this node. 
       for (auto &s : *b) 
@@ -310,8 +296,6 @@ private:
         // If it's the false case, assume the negation of the terminator.
         // Note that these invariants come from clang itself. 
         if (Term) {
-          lin_cst_t TermConstraint = TermSV.getResult();
-
           if (didIf == false) {
             didIf = true;
             assume_b.assume(TermConstraint);

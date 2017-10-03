@@ -1,6 +1,6 @@
 
 CRAB_ROOT ?= /home/andrew/local/crab
-
+BOOST_ROOT ?= /home/andrew/local/boost-1.62
 CONFIG ?= llvm-config
 
 CXXFLAGS = $(shell $(CONFIG) --cxxflags) -g -ggdb
