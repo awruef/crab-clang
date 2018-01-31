@@ -25,13 +25,16 @@
 
 #include <boost/variant.hpp>
 
+using namespace std;
+
 // Define types for crab. 
 namespace crab {
   typedef cfg::var_factory_impl::str_variable_factory variable_factory_t;
   typedef typename variable_factory_t::varname_t varname_t;
+
   namespace cfg_impl {
-    typedef std::string basic_block_label_t;
-    template<> inline std::string get_label_str(std::string e) { return e; }
+    typedef string basic_block_label_t;
+    template<> inline string get_label_str(string e) { return e; }
 
     typedef cfg::Cfg<basic_block_label_t, varname_t, ikos::z_number> cfg_t;
     typedef cfg::cfg_ref<cfg_t> cfg_ref_t;
@@ -73,9 +76,9 @@ class GenericAction : public ASTFrontendAction {
 public:
   GenericAction() {} 
 
-  virtual std::unique_ptr<ASTConsumer>
+  virtual unique_ptr<ASTConsumer>
   CreateASTConsumer(CompilerInstance &Compiler, StringRef InFile) {
-    return std::unique_ptr<ASTConsumer>(new T(InFile, &Compiler.getASTContext()));
+    return unique_ptr<ASTConsumer>(new T(InFile, &Compiler.getASTContext()));
   }
 };
 
@@ -86,10 +89,23 @@ typedef enum _CResultI {
   CONSTRAINT
 } CResultI;
 
+// Convert a clang type to a crab type. 
+variable_type clangToCrabTy(QualType T) {
+  if (T->isPointerType())
+    return PTR_TYPE;
+  else if (T->isBooleanType())
+    return BOOL_TYPE;
+  else if (T->isIntegerType())
+    return INT_TYPE;
+  else
+    return UNK_TYPE;
+}
+
+
 // Make a temporary variable name based on the current number and a 
 // specified base name. 
-std::string mkTempVarName(unsigned &curVn, std::string baseName) {
-  std::ostringstream oss;
+string mkTempVarName(unsigned &curVn, string baseName) {
+  ostringstream oss;
   oss << curVn++ << baseName;
   return oss.str();
 }
@@ -108,7 +124,7 @@ CResult makeVarForExpr(const Expr *E, unsigned &curVn, variable_factory_t &vf, b
     CResult lhs = makeVarForExpr(BO->getLHS()->IgnoreParenImpCasts(), curVn, vf, b);
     CResult rhs = makeVarForExpr(BO->getRHS()->IgnoreParenImpCasts(), curVn, vf, b);
 
-    z_var   var(vf[mkTempVarName(curVn, "_temp")]);
+    z_var   var(vf[mkTempVarName(curVn, "_temp")], clangToCrabTy(BO->getType()), 32);
     v =     lin_t(var);
 
     if ((lhs.which() == EXPR) && (rhs.which() == EXPR)) {
@@ -146,7 +162,7 @@ CResult makeVarForExpr(const Expr *E, unsigned &curVn, variable_factory_t &vf, b
   } 
   else if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E)) {
     // Look up the variable referenced by DRE, and give it back. 
-    res = CResult(lin_t(z_var(vf[DRE->getDecl()->getNameAsString()])));
+    res = CResult(lin_t(z_var(vf[DRE->getDecl()->getNameAsString()], clangToCrabTy(E->getType()), 32)));
   } 
   else if (const IntegerLiteral *IL = dyn_cast<IntegerLiteral>(E)) {
     // Give back the constant value by converting the APInt to an mpz. 
@@ -170,8 +186,8 @@ CResult walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_b
     if (const Expr *E = RS->getRetValue()) {
       CResult v = makeVarForExpr(E->IgnoreParenImpCasts(), curvn, vf, b);
       if (v.which() == EXPR) {
-        z_var rv = vf["__CRAB_return"];
-        b.assign(vf["__CRAB_return"], boost::get<lin_t>(v));
+        z_var rv(vf["__CRAB_return"], clangToCrabTy(E->getType()), 32);
+        b.assign(rv, boost::get<lin_t>(v));
       } else {
         llvm_unreachable("Did not get expr from a return values expr!");
       }
@@ -192,77 +208,64 @@ class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
 	ASTContext                        *Ctx;
   variable_factory_t                vfac;
-  std::set<std::shared_ptr<cfg_t>>  cfgs;
+  set<shared_ptr<cfg_t>>  cfgs;
 
   // Make a string label for a basic block.
-  std::string label(const CFGBlock &b) const {
-    std::ostringstream  oss;
+  string label(const CFGBlock &b) const {
+    ostringstream  oss;
     oss << "BB#";
     oss << b.getBlockID();
     return oss.str();
   }
   
-  // Convert a clang type to a crab type. 
-  variable_type clangToCrabTy(QualType T) const {
-    if (T->isPointerType())
-      return PTR_TYPE;
-    else if (T->isBooleanType())
-      return BOOL_TYPE;
-    else if (T->isIntegerType())
-      return INT_TYPE;
-    else
-      return UNK_TYPE;
-
-  }
-
   // Convert a clang ParmVarDecl into a crab declaration pair. 
-  std::pair<varname_t, variable_type> toP(ParmVarDecl *pvd) {
-    return std::pair<varname_t, variable_type>
-      (vfac[pvd->getNameAsString()], clangToCrabTy(pvd->getType()));
+  z_var toP(ParmVarDecl *pvd) {
+    return z_var( vfac[pvd->getNameAsString()], 
+                  clangToCrabTy(pvd->getType()), 32);
   }
 
-  std::pair<varname_t, variable_type> toR(QualType returnType) {
-    return std::pair<varname_t, variable_type>
-      (vfac["__CRAB_return"], clangToCrabTy(returnType)); 
+  z_var toR(QualType returnType) {
+    return z_var(vfac["__CRAB_return"], clangToCrabTy(returnType), 32); 
   }
 
   // Convert a clang CFG into a crab CFG.
-  std::shared_ptr<cfg_t> 
-    toCrab( std::unique_ptr<CFG>      &cfg,
-            FunctionDecl              *FD,
-            std::vector<ParmVarDecl*> params) 
-  {
-    unsigned                                          varPrefix = 0;
-    std::vector<std::pair<varname_t,variable_type> >  cparams;
-    std::vector<std::pair<varname_t,variable_type> >  rparams; 
+  shared_ptr<cfg_t> toCrab(unique_ptr<CFG> &cfg, FunctionDecl *FD) {
+    auto &entry = cfg->getEntry();
+    auto &exit = cfg->getExit();
 
-    for (const auto &p : params) 
-      cparams.push_back(toP(p));
+    vector<z_var> cp;
+    vector<z_var> rp; 
 
-    // For now, CRAB functions only return the values their C versions do.
-    std::pair<varname_t, variable_type> returnV = toR(FD->getReturnType());
-    rparams.push_back(returnV);
+    for (const auto &p : FD->parameters())
+      cp.push_back(toP(p));
+    auto returnV = toR(FD->getReturnType());
+    rp.push_back(returnV);
 
-    CFGBlock  &entry = cfg->getEntry();
-    CFGBlock  &exit = cfg->getExit();
-    std::shared_ptr<cfg_t>  c(new cfg_t(label(entry), label(exit)));
+    // Make a function declaration. 
+    function_decl<z_number, varname_t> CD(FD->getNameAsString(), cp, rp);
+    shared_ptr<cfg_t> c(new cfg_t(label(entry), label(exit), CD));
 
+    unsigned  varPrefix = 0;
     // One pass to make new blocks in the crab cfg. 
     for (const auto &b : *cfg) 
       c->insert(label(*b));
-
+    
     // Create the initial structure: havoc the return values, and return them
     // at the end of the crab CFG.     
+    // Iterate over the clang CFG, adding statements as appropriate. 
     basic_block_t &crab_entry = c->get_node(label(entry));
     basic_block_t &crab_exit = c->get_node(label(exit));
-    crab_entry.havoc(returnV.first);
-    crab_exit.ret(returnV.first, returnV.second);
+    crab_entry.havoc(returnV);
+    crab_exit.ret(returnV);
 
-    // Iterate over the clang CFG, adding statements as appropriate. 
     for (auto &b : *cfg) {
       basic_block_t &cur = c->get_node(label(*b));
 
-      // Get the terminator statement from the clang CFG. 
+      // Walk every statement in the basic block. 
+      for (auto &s : *b) 
+        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
+          walkStmt(orStmt.getValue().getStmt(), varPrefix, vfac, cur);
+      
       Stmt *Term = b->getTerminatorCondition(true);
       lin_cst_t TermConstraint;
       if (Term) {
@@ -275,12 +278,7 @@ private:
       }
 
       // Walk the statements in this node. 
-      for (auto &s : *b) 
-        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
-          // Skip terminators, since we deal with them separately (for now).
-          if (orStmt.getValue().getStmt() != b->getTerminatorCondition(false))
-            walkStmt(orStmt.getValue().getStmt(), varPrefix, vfac, cur);
- 
+
       bool didIf = false;
       bool didElse = false;
       // Update the structure of the CFG, with branches. 
@@ -288,6 +286,7 @@ private:
         basic_block_t &sb = c->get_node(label(*s));
         basic_block_t &assume_b = c->insert(label(*b) + "_to_" + label(*s));
 
+        // Update the structure of the CFG. 
         cur >> assume_b;
         assume_b >> sb;
 
@@ -309,8 +308,6 @@ private:
       }
     }
 
-    function_decl<varname_t>  decl(vfac[FD->getNameAsString()], cparams, rparams);
-    c->set_func_decl(decl);
     return c;
   } 
 
@@ -322,14 +319,13 @@ public:
 
     if (D->hasBody() && D->isThisDeclarationADefinition()) {
       CFG::BuildOptions BO;
-      std::unique_ptr<CFG>  cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
+      unique_ptr<CFG>  cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
 
       if (cfg ) {
         if (Verbose)
           cfg->dump(Ctx->getLangOpts(), true);
-        std::shared_ptr<cfg_t>  crabCfg = toCrab( cfg, 
-                                                  D, 
-                                                  D->parameters());
+        shared_ptr<cfg_t> crabCfg = toCrab(cfg, D);
+
         if (Verbose)
           crab::outs() << *crabCfg;
 
@@ -340,7 +336,7 @@ public:
     return true;
   }
 
-  std::set<std::shared_ptr<cfg_t>> getCfgs() { return cfgs; }
+  set<shared_ptr<cfg_t>> getCfgs() { return cfgs; }
 };
 
 class CFGBuilderConsumer : public ASTConsumer {
@@ -351,7 +347,7 @@ public:
 
 private:
 	ASTContext *Ctx;
-	std::string	File;
+	string	File;
 };
 
 void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
@@ -394,7 +390,7 @@ int main(int argc, const char **argv) {
   tooling::CommandLineArguments args = OptionsParser.getSourcePathList();
   ClangTool Tool(OptionsParser.getCompilations(), args);
 
-	std::unique_ptr<ToolAction>	Action = newFrontendActionFactory<CFGBuildAction>();
+	unique_ptr<ToolAction>	Action = newFrontendActionFactory<CFGBuildAction>();
 
   if (Action) 
 		Tool.run(Action.get());
