@@ -101,7 +101,6 @@ variable_type clangToCrabTy(QualType T) {
     return UNK_TYPE;
 }
 
-
 // Make a temporary variable name based on the current number and a 
 // specified base name. 
 string mkTempVarName(unsigned &curVn, string baseName) {
