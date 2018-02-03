@@ -20,6 +20,7 @@
 
 #include <crab/domains/split_dbm.hpp>
 #include <crab/domains/intervals.hpp>
+#include <crab/domains/apron_domains.hpp>
 
 #include <crab/analysis/fwd_analyzer.hpp>
 
@@ -47,11 +48,13 @@ namespace crab {
   }
 
   namespace domains { 
-    typedef interval_domain<ikos::z_number,varname_t> z_interval_domain_t;
+    typedef interval_domain<ikos::z_number,varname_t>       z_interval_domain_t;
+    typedef apron_domain<ikos::z_number,varname_t,APRON_PK> z_apron_domain_t;
   }
 
   namespace analyzer {
     typedef intra_fwd_analyzer<cfg_impl::cfg_ref_t, domains::z_interval_domain_t> num_analyzer_t;
+    typedef intra_fwd_analyzer<cfg_impl::cfg_ref_t, domains::z_apron_domain_t> apron_analyzer_t;
   }
 }
 
@@ -364,6 +367,17 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
     for (auto &b : *c) {
 			auto pre = a.get_pre (b.label ());
     	auto post = a.get_post (b.label ());
+     	crab::outs() << get_label_str (b.label ()) << "="
+               << pre
+               << " ==> "
+               << post << "\n";
+    }
+    analyzer::apron_analyzer_t aa(*c, z_apron_domain_t::top()); 
+    aa.run();
+
+    for (auto &b : *c) {
+			auto pre = aa.get_pre (b.label ());
+    	auto post = aa.get_post (b.label ());
      	crab::outs() << get_label_str (b.label ()) << "="
                << pre
                << " ==> "
