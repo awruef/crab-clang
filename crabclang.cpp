@@ -269,6 +269,7 @@ private:
         return lin_t(boost::get<z_number>(r));
         break;
     }
+    llvm_unreachable("Should never get here");
   }
 
 public:
@@ -300,6 +301,20 @@ public:
     // Store the result in a fresh temporary. 
     z_var res = z_var(vfac[mkTempVarName(varPrefix, "_tmp")], INT_TYPE, 32);
     switch(BO->getOpcode()) {
+      case BO_Mul:
+        // Special case for mul, is it a scalar multiply?
+        if (false) {
+
+        }
+      // Non-linear cases
+      case BO_Shr:
+      case BO_Shl: 
+      case BO_Rem:
+      case BO_Div:
+        Current.havoc(res);
+        CCB.insert(CrabClangBimap::value_type(res, BO));
+        break;
+      // These generate assignment statements of some sort. 
       case BO_Add:
         Current.assign(res, LHS + RHS);
         CCB.insert(CrabClangBimap::value_type(res, BO));
@@ -307,18 +322,6 @@ public:
       case BO_Sub:
         Current.assign(res, LHS - RHS);
         CCB.insert(CrabClangBimap::value_type(res, BO));
-        break;
-      case BO_LT:
-        SCM.insert(std::make_pair(BO, LHS < RHS));
-        break;
-      case BO_LE:
-        SCM.insert(std::make_pair(BO, LHS <= RHS));
-        break;
-      case BO_GT:
-        SCM.insert(std::make_pair(BO, LHS > RHS));
-        break;
-      case BO_GE:
-        SCM.insert(std::make_pair(BO, LHS >= RHS));
         break;
       case BO_AddAssign:
         Current.assign(res, LHS + RHS);
@@ -330,8 +333,25 @@ public:
         Current.assign(boost::get<z_var>(getResult(BO->getLHS())), res);
         CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
-      default:
-        llvm_unreachable("Unsupported opcode!");
+      // These generate constraints rather than statements. 
+      case BO_LT:
+        SCM.insert(make_pair(BO, LHS < RHS));
+        break;
+      case BO_LE:
+        SCM.insert(make_pair(BO, LHS <= RHS));
+        break;
+      case BO_GT:
+        SCM.insert(make_pair(BO, LHS > RHS));
+        break;
+      case BO_GE:
+        SCM.insert(make_pair(BO, LHS >= RHS));
+        break;
+      case BO_EQ:
+        SCM.insert(make_pair(BO, LHS == RHS));
+        break;
+      case BO_NE:
+        SCM.insert(make_pair(BO, LHS != RHS));
+        break;
     } 
 
     return true;
@@ -524,6 +544,7 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
     for (auto &b : *c) {
 			auto pre = aa.get_pre (b.label ());
     	auto post = aa.get_post (b.label ());
+      
      	crab::outs() << get_label_str (b.label ()) << "="
                << pre
                << " ==> "

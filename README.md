@@ -59,32 +59,3 @@ we're that worse off.
 
 Very skeletal so far. We are exploring how to represent the AST in CRAB. 
 Right now, it only works for the ludicrously simple example program. 
-
-# immediate to-do?
-
-1. The organization of visitors is a catastrophe. I'm not totally sure what
-   to do between the distinction between a CRAB _constraint_ and a CRAB
-   _expression_. It seems like sometimes, you want to run an _expression_
-   down to a temporary that holds the results, and other times, you want 
-   to translate a _statement_ into modifications on a basic block. 
-2. To compound this catastrophe-ness, when you're iterating over the contents
-   of a `CFGBlock` the `Stmt`'s are all `const` qualified and the 
-   `RecursiveASTVisitor` isn't. So, there will need to be a recursive function 
-   that _is_ `const` qualified (right now it's a function named `walkStmt`) 
-   that will do a recursive traversal of `Stmt` into CRAB CFG. 
-3. The `assume` generation needs to be different. If there's a branch in block
-   *A* and that branch calculates a bunch of intermediate stuff (say like, 
-   `f() < g()`) then the code for calculation needs to be in block *A* and 
-   the assumes need to be in terms of the temporaries produced by the 
-   calculation. 
-
-   One way to deal with this that I thought of today: as a pre-pass, identify 
-   all basic blocks that are the target of a branch, and create pre versions of
-   those basic blocks only to hold assume statements. Actually, this doesn't need
-   to be done as a pre-pass, it could probably be done during the insertion of
-   the assume statements. At the point when the assume statements are being 
-   generated, we're in block _A_ with succs _B_ and _C_. Create block _B'_ and 
-   _C'_, and make _A_ branch to _B'_ and _C'_. Put `assume` statements into 
-   _B'_ and _C'_, then have _B'_ branch to _B_ and _C'_ branch to _C_. 
-4. How to deal with variable-width integers? It seems like this is something
-   that we need to push down into the domain. 
