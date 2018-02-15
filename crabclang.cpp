@@ -25,6 +25,7 @@
 #include <crab/analysis/fwd_analyzer.hpp>
 
 #include <boost/variant.hpp>
+#include <boost/bimap.hpp>
 
 using namespace std;
 
@@ -195,9 +196,13 @@ CResult walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_b
       }
     }
   } else if (const IfStmt *I = dyn_cast<const IfStmt>(S)) {
-    // Just do the guard, for now. 
+    llvm_unreachable("We shouldn't get here");
   } else if (const BinaryOperator *BO = dyn_cast<const BinaryOperator>(S)) {
     return makeVarForExpr(BO, curvn, vf, b);
+  } else if (const ImplicitCastExpr *ICE = dyn_cast<const ImplicitCastExpr>(S)) {
+    return walkStmt(ICE->getSubExpr(), curvn, vf, b);
+  } else if (const DeclRefExpr *DRE = dyn_cast<const DeclRefExpr>(S)) {
+    return makeVarForExpr(DRE, curvn, vf, b);
   } else {
     S->dump();
     llvm_unreachable("Unsupported statement");
@@ -205,6 +210,130 @@ CResult walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_b
 
   return res;
 }
+
+// This visits statements in the clang AST in post-order. 
+// As it encounters expressions, it translates those expressions 
+// into crab, printing them into the current basic block. 
+
+class SVisitor : public RecursiveASTVisitor<SVisitor> {
+public:
+  typedef boost::bimap<z_var,Stmt *> CrabClangBimap;
+private:
+  basic_block_t       &Current;
+  unsigned            &varPrefix;
+  CrabClangBimap      &CCB;
+  variable_factory_t  &vfac;
+  SourceManager       &SM;
+
+  typedef boost::variant<boost::blank, z_var, z_number> SResult;
+  typedef enum _SResultI { EMPTY, VAR, NUM} SResultI;
+
+  SResult getResult(Expr *E) {
+    auto *tE = E->IgnoreParenImpCasts();
+    // Is E a direct variable reference of something? Just return the variable.
+    if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(tE)) {
+      ValueDecl   *VD = DRE->getDecl();
+      SourceRange VDSource = VD->getSourceRange();
+      bool        inv = false;
+      unsigned i = SM.getSpellingLineNumber(VDSource.getBegin(), &inv);
+      auto VarName = VD->getNameAsString();
+      return SResult(z_var(vfac[VarName+"_"+to_string(i)], INT_TYPE, 32));
+    } else if (IntegerLiteral *IL = dyn_cast<IntegerLiteral>(tE)) {
+      // Don't need to do anything, just give back the number.
+      return SResult(z_number(IL->getValue().getSExtValue()));
+    }
+
+    // If it is not, then we need to find the statement that produced it 
+    // somewhere. It should have already been produced and stored in the 
+    // bimap.  
+    auto I = CCB.right.find(E);
+    // We should be able to find it, if we can't, there has been an error.
+    assert(I != CCB.right.end());
+    return SResult(I->second);
+  }
+
+  lin_t unwrap(SResult r) {
+    switch(r.which()) {
+      case EMPTY:
+        assert(!"Trying to unwrap an empty value");
+        break;
+      case VAR:
+        return lin_t(boost::get<z_var>(r));
+        break;
+      case NUM:
+        return lin_t(boost::get<z_number>(r));
+        break;
+    }
+  }
+
+public:
+  SVisitor( basic_block_t       &C, 
+            unsigned            &V, 
+            CrabClangBimap      &B, 
+            variable_factory_t  &F,
+            SourceManager       &S) : 
+    Current(C),varPrefix(V),CCB(B),vfac(F),SM(S) { } 
+
+  bool shouldTraversePostOrder() const { return true; }
+
+  bool VisitBinaryOperator(BinaryOperator *BO) {
+    auto LHS = unwrap(getResult(BO->getLHS()));
+    auto RHS = unwrap(getResult(BO->getRHS()));
+
+    // Store the result in a fresh temporary. 
+    z_var res = z_var(vfac[mkTempVarName(varPrefix, "_tmp")], INT_TYPE, 32);
+    switch(BO->getOpcode()) {
+      case BO_Add:
+        Current.assign(res, LHS + RHS);
+        break;
+      case BO_Sub:
+        Current.assign(res, LHS - RHS);
+        break;
+      case BO_LT:
+        Current.select(res, LHS <= (RHS-1), lin_t(z_number(1)), lin_t(z_number(0)));
+        break;
+      case BO_LE:
+        Current.select(res, LHS <= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        break;
+      case BO_GT:
+        Current.select(res, (LHS-1) >= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        break;
+      case BO_GE:
+        Current.select(res, LHS >= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        break;
+      default:
+        llvm_unreachable("Unsupported opcode!");
+    } 
+
+    // Update the map with this fresh temporary. 
+    CCB.insert(CrabClangBimap::value_type(res, BO));
+
+    return true;
+  }
+
+  // If a return value is present, write it into the functions
+  // return slot. 
+  bool VisitReturnStmt(ReturnStmt *R) {
+    if (Expr *ReturnStmt = R->getRetValue()) {
+      SResult RV = getResult(ReturnStmt);
+      z_var  rv(vfac["__CRAB_return"], 
+                clangToCrabTy(ReturnStmt->getType()), 32); 
+
+      switch(RV.which()) {
+        case EMPTY:
+          break;
+        case VAR:
+          Current.assign(rv, boost::get<z_var>(RV));
+          break;
+        case NUM:
+          Current.assign(rv, boost::get<z_number>(RV));
+          break;
+      }
+    }
+
+    return true;
+  }
+};
 
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
@@ -235,15 +364,15 @@ private:
     auto &entry = cfg->getEntry();
     auto &exit = cfg->getExit();
 
-    vector<z_var> cp;
-    vector<z_var> rp; 
+    SVisitor::CrabClangBimap  CCB;
+    vector<z_var>             cp;
+    vector<z_var>             rp; 
 
     for (const auto &p : FD->parameters())
       cp.push_back(toP(p));
     auto returnV = toR(FD->getReturnType());
     rp.push_back(returnV);
 
-    // Make a function declaration. 
     function_decl<z_number, varname_t> CD(FD->getNameAsString(), cp, rp);
     shared_ptr<cfg_t> c(new cfg_t(label(entry), label(exit), CD));
 
@@ -252,60 +381,59 @@ private:
     for (const auto &b : *cfg) 
       c->insert(label(*b));
     
-    // Create the initial structure: havoc the return values, and return them
-    // at the end of the crab CFG.     
-    // Iterate over the clang CFG, adding statements as appropriate. 
     basic_block_t &crab_entry = c->get_node(label(entry));
     basic_block_t &crab_exit = c->get_node(label(exit));
     crab_entry.havoc(returnV);
     crab_exit.ret(returnV);
 
-    for (auto &b : *cfg) {
+    for (const auto &b : *cfg) {
       basic_block_t &cur = c->get_node(label(*b));
-
-      // Walk every statement in the basic block. 
-      for (auto &s : *b) 
-        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
-          walkStmt(orStmt.getValue().getStmt(), varPrefix, vfac, cur);
+      SVisitor      S(cur, varPrefix, CCB, vfac, Ctx->getSourceManager());
       
-      Stmt *Term = b->getTerminatorCondition(true);
-      lin_cst_t TermConstraint;
-      if (Term) {
-        CResult r = walkStmt(Term, varPrefix, vfac, cur);
+      for (const auto &s : *b) 
+        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
+          S.TraverseStmt((Stmt *)orStmt.getValue().getStmt());
+  
+      vector<basic_block_t *> succs;
+      // Add conditional control flow. 
+      for (const auto &s : b->succs()) {
+        if (s) {
+          basic_block_t &sb = c->get_node(label(*s));
+          basic_block_t &assume_b = c->insert(label(*b) + "_to_" + label(*s));
 
-        if (r.which() == CONSTRAINT) 
-          TermConstraint = boost::get<lin_cst_t>(r);
-        else 
-          llvm_unreachable("Should have got a constraint!");
+          // Update the structure of the CFG. 
+          cur >> assume_b;
+          assume_b >> sb;
+          succs.push_back(&assume_b);
+        } else {
+          succs.push_back(nullptr);
+        }
       }
 
-      // Walk the statements in this node. 
+      // Switch on the form of the terminator, if present. 
+      if (const Stmt *Term = b->getTerminator().getStmt()) {
+        if (const WhileStmt *While = dyn_cast<WhileStmt>(Term)) {
+          //auto I = CCB.right.find(b->getTerminatorCondition());
+          //assert(I != CCB.right.end());
 
-      bool didIf = false;
-      bool didElse = false;
-      // Update the structure of the CFG, with branches. 
-      for (const auto &s : b->succs()) {
-        basic_block_t &sb = c->get_node(label(*s));
-        basic_block_t &assume_b = c->insert(label(*b) + "_to_" + label(*s));
-
-        // Update the structure of the CFG. 
-        cur >> assume_b;
-        assume_b >> sb;
-
-        // Is this successor the true or the false case? 
-        // If it's the true case, assume the terminator. 
-        // If it's the false case, assume the negation of the terminator.
-        // Note that these invariants come from clang itself. 
-        if (Term) {
-          if (didIf == false) {
-            didIf = true;
-            assume_b.assume(TermConstraint);
-          } else if (didElse == false) {
-            didElse = false;
-            assume_b.assume(TermConstraint.negate());
-          } else {
-            llvm_unreachable("Don't deal with more than two successors right now.");
-          }
+        } else if (const IfStmt *If = dyn_cast<IfStmt>(Term)) {
+          // Get the terminating statement and find the crab variable.
+          auto I = CCB.right.find(b->getTerminatorCondition());
+          assert(I != CCB.right.end());
+          //assert(succs
+          // Assume I == 1 in succs[0] if present.
+          if (succs[0]) 
+            succs[0]->assume(I->second == lin_t(z_number(1)));
+          // Assume I == 0 of the statement in succs[1] if present.
+          if (succs[1]) 
+            succs[1]->assume(I->second == lin_t(z_number(0)));
+        } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
+          // In each of the successor blocks, assume that the crab variable
+          // for the terminating statement is equal to the lable. 
+        
+        } else {
+          Term->dump();
+          llvm::errs() << "Unknown terminator type!\n";
         }
       }
     }
@@ -329,9 +457,15 @@ public:
         shared_ptr<cfg_t> crabCfg = toCrab(cfg, D);
 
         if (Verbose)
-          crab::outs() << *crabCfg;
-
-        cfgs.insert(crabCfg);
+          if (crabCfg)
+            crab::outs() << *crabCfg;
+        
+        if (crabCfg) {
+          cfgs.insert(crabCfg);
+        } else {
+          crab::errs() << "Could not get CFG for function ";
+          crab::errs()  << D->getNameAsString() << "\n";
+        }
       }
     }
 
