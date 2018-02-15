@@ -446,13 +446,15 @@ private:
         } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
           // In each of the successor blocks, assume that the crab variable
           // for the terminating statement is equal to the lable. 
-        
         } else {
           Term->dump();
           llvm::errs() << "Unknown terminator type!\n";
         }
       }
     }
+    
+    if (c) 
+      c->simplify();
 
     return c;
   } 
@@ -511,17 +513,6 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
 
   // Run analyzer. 
   for (auto &c : V.getCfgs()) {
-    /*analyzer::num_analyzer_t a(*c, z_interval_domain_t::top()); 
-    a.run();
-
-    for (auto &b : *c) {
-			auto pre = a.get_pre (b.label ());
-    	auto post = a.get_post (b.label ());
-     	crab::outs() << get_label_str (b.label ()) << "="
-               << pre
-               << " ==> "
-               << post << "\n";
-    }*/
     analyzer::apron_analyzer_t aa(*c, z_apron_domain_t::top()); 
     aa.run();
 
