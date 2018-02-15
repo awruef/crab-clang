@@ -218,10 +218,12 @@ CResult walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_b
 class SVisitor : public RecursiveASTVisitor<SVisitor> {
 public:
   typedef boost::bimap<z_var,Stmt *> CrabClangBimap;
+  typedef std::map<Stmt *,lin_cst_t> SCMap;
 private:
   basic_block_t       &Current;
   unsigned            &varPrefix;
   CrabClangBimap      &CCB;
+  SCMap               &SCM;
   variable_factory_t  &vfac;
   SourceManager       &SM;
 
@@ -273,9 +275,10 @@ public:
   SVisitor( basic_block_t       &C, 
             unsigned            &V, 
             CrabClangBimap      &B, 
+            SCMap               &M,
             variable_factory_t  &F,
             SourceManager       &S) : 
-    Current(C),varPrefix(V),CCB(B),vfac(F),SM(S) { } 
+    Current(C),varPrefix(V),CCB(B),SCM(M),vfac(F),SM(S) { } 
 
   bool shouldTraversePostOrder() const { return true; }
 
@@ -299,32 +302,32 @@ public:
     switch(BO->getOpcode()) {
       case BO_Add:
         Current.assign(res, LHS + RHS);
+        CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       case BO_Sub:
         Current.assign(res, LHS - RHS);
+        CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       case BO_LT:
-        Current.select(res, LHS < RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        SCM.insert(std::make_pair(BO, LHS < RHS));
         break;
       case BO_LE:
-        Current.select(res, LHS <= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        SCM.insert(std::make_pair(BO, LHS <= RHS));
         break;
       case BO_GT:
-        Current.select(res, LHS > RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        SCM.insert(std::make_pair(BO, LHS > RHS));
         break;
       case BO_GE:
-        Current.select(res, LHS >= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        SCM.insert(std::make_pair(BO, LHS >= RHS));
         break;
       case clang::BO_AddAssign:
         Current.assign(res, LHS + RHS);
-        Current.assign(boost::get<z_var>(getResult(BO->getLHS())), res);
+        Current.assign(boost::get<z_var>(getResult(BO->getLHS())), LHS + RHS);
+        CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       default:
         llvm_unreachable("Unsupported opcode!");
     } 
-
-    // Update the map with this fresh temporary. 
-    CCB.insert(CrabClangBimap::value_type(res, BO));
 
     return true;
   }
@@ -383,6 +386,7 @@ private:
     auto &exit = cfg->getExit();
 
     SVisitor::CrabClangBimap  CCB;
+    SVisitor::SCMap           SCM;
     vector<z_var>             cp;
     vector<z_var>             rp; 
 
@@ -406,7 +410,7 @@ private:
 
     for (const auto &b : *cfg) {
       basic_block_t &cur = c->get_node(label(*b));
-      SVisitor      S(cur, varPrefix, CCB, vfac, Ctx->getSourceManager());
+      SVisitor      S(cur, varPrefix, CCB, SCM, vfac, Ctx->getSourceManager());
       
       for (const auto &s : *b) 
         if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
@@ -430,26 +434,15 @@ private:
 
       // Switch on the form of the terminator, if present. 
       if (const Stmt *Term = b->getTerminator().getStmt()) {
-        if (const WhileStmt *While = dyn_cast<WhileStmt>(Term)) {
-          auto I = CCB.right.find(b->getTerminatorCondition());
-          assert(I != CCB.right.end());
-          
+        if (isa<WhileStmt>(Term) || isa<IfStmt>(Term)) {
+          auto I = SCM.find(b->getTerminatorCondition());
+          assert(I != SCM.end());
+
           if (succs[0])
-            succs[0]->assume(I->second == lin_t(z_number(1)));
+            succs[0]->assume(I->second);
 
           if (succs[1])
-            succs[1]->assume(I->second == lin_t(z_number(0)));
-        } else if (const IfStmt *If = dyn_cast<IfStmt>(Term)) {
-          // Get the terminating statement and find the crab variable.
-          auto I = CCB.right.find(b->getTerminatorCondition());
-          assert(I != CCB.right.end());
-
-          // Assume I == 1 in succs[0] if present.
-          if (succs[0]) 
-            succs[0]->assume(I->second == lin_t(z_number(1)));
-          // Assume I == 0 of the statement in succs[1] if present.
-          if (succs[1]) 
-            succs[1]->assume(I->second == lin_t(z_number(0)));
+            succs[1]->assume(I->second.negate());
         } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
           // In each of the successor blocks, assume that the crab variable
           // for the terminating statement is equal to the lable. 
