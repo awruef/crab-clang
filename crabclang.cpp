@@ -228,16 +228,19 @@ private:
   typedef boost::variant<boost::blank, z_var, z_number> SResult;
   typedef enum _SResultI { EMPTY, VAR, NUM} SResultI;
 
+  z_var varFromDecl(ValueDecl *VD) {
+    SourceRange VDSource = VD->getSourceRange();
+    bool        inv = false;
+    unsigned i = SM.getSpellingLineNumber(VDSource.getBegin(), &inv);
+    auto VarName = VD->getNameAsString();
+    return z_var(vfac[VarName+"_"+to_string(i)], INT_TYPE, 32);
+  }
+
   SResult getResult(Expr *E) {
     auto *tE = E->IgnoreParenImpCasts();
     // Is E a direct variable reference of something? Just return the variable.
     if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(tE)) {
-      ValueDecl   *VD = DRE->getDecl();
-      SourceRange VDSource = VD->getSourceRange();
-      bool        inv = false;
-      unsigned i = SM.getSpellingLineNumber(VDSource.getBegin(), &inv);
-      auto VarName = VD->getNameAsString();
-      return SResult(z_var(vfac[VarName+"_"+to_string(i)], INT_TYPE, 32));
+      return SResult(varFromDecl(DRE->getDecl()));
     } else if (IntegerLiteral *IL = dyn_cast<IntegerLiteral>(tE)) {
       // Don't need to do anything, just give back the number.
       return SResult(z_number(IL->getValue().getSExtValue()));
@@ -276,6 +279,17 @@ public:
 
   bool shouldTraversePostOrder() const { return true; }
 
+  bool VisitVarDecl(VarDecl *Var) {
+    z_var v = varFromDecl(Var);
+
+    if (Var->hasInit()) 
+      Current.assign(v, unwrap(getResult(Var->getInit())));
+    else 
+      Current.havoc(v);
+
+    return true;
+  }
+
   bool VisitBinaryOperator(BinaryOperator *BO) {
     auto LHS = unwrap(getResult(BO->getLHS()));
     auto RHS = unwrap(getResult(BO->getRHS()));
@@ -290,16 +304,20 @@ public:
         Current.assign(res, LHS - RHS);
         break;
       case BO_LT:
-        Current.select(res, LHS <= (RHS-1), lin_t(z_number(1)), lin_t(z_number(0)));
+        Current.select(res, LHS < RHS, lin_t(z_number(1)), lin_t(z_number(0)));
         break;
       case BO_LE:
         Current.select(res, LHS <= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
         break;
       case BO_GT:
-        Current.select(res, (LHS-1) >= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        Current.select(res, LHS > RHS, lin_t(z_number(1)), lin_t(z_number(0)));
         break;
       case BO_GE:
         Current.select(res, LHS >= RHS, lin_t(z_number(1)), lin_t(z_number(0)));
+        break;
+      case clang::BO_AddAssign:
+        Current.assign(res, LHS + RHS);
+        Current.assign(boost::get<z_var>(getResult(BO->getLHS())), res);
         break;
       default:
         llvm_unreachable("Unsupported opcode!");
@@ -413,14 +431,19 @@ private:
       // Switch on the form of the terminator, if present. 
       if (const Stmt *Term = b->getTerminator().getStmt()) {
         if (const WhileStmt *While = dyn_cast<WhileStmt>(Term)) {
-          //auto I = CCB.right.find(b->getTerminatorCondition());
-          //assert(I != CCB.right.end());
+          auto I = CCB.right.find(b->getTerminatorCondition());
+          assert(I != CCB.right.end());
+          
+          if (succs[0])
+            succs[0]->assume(I->second == lin_t(z_number(1)));
 
+          if (succs[1])
+            succs[1]->assume(I->second == lin_t(z_number(0)));
         } else if (const IfStmt *If = dyn_cast<IfStmt>(Term)) {
           // Get the terminating statement and find the crab variable.
           auto I = CCB.right.find(b->getTerminatorCondition());
           assert(I != CCB.right.end());
-          //assert(succs
+
           // Assume I == 1 in succs[0] if present.
           if (succs[0]) 
             succs[0]->assume(I->second == lin_t(z_number(1)));
@@ -495,7 +518,7 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
 
   // Run analyzer. 
   for (auto &c : V.getCfgs()) {
-    analyzer::num_analyzer_t a(*c, z_interval_domain_t::top()); 
+    /*analyzer::num_analyzer_t a(*c, z_interval_domain_t::top()); 
     a.run();
 
     for (auto &b : *c) {
@@ -505,7 +528,7 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
                << pre
                << " ==> "
                << post << "\n";
-    }
+    }*/
     analyzer::apron_analyzer_t aa(*c, z_apron_domain_t::top()); 
     aa.run();
 
