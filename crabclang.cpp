@@ -320,9 +320,14 @@ public:
       case BO_GE:
         SCM.insert(std::make_pair(BO, LHS >= RHS));
         break;
-      case clang::BO_AddAssign:
+      case BO_AddAssign:
         Current.assign(res, LHS + RHS);
         Current.assign(boost::get<z_var>(getResult(BO->getLHS())), LHS + RHS);
+        CCB.insert(CrabClangBimap::value_type(res, BO));
+        break;
+      case BO_Assign:
+        Current.assign(res, RHS);
+        Current.assign(boost::get<z_var>(getResult(BO->getLHS())), res);
         CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       default:
