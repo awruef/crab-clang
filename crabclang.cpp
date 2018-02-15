@@ -6,6 +6,7 @@
 #include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Tooling.h>
 #include <clang/Analysis/CFG.h>
+#include <clang/Analysis/Analyses/PostOrderCFGView.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/Option/OptTable.h>
@@ -45,6 +46,7 @@ namespace crab {
     typedef ikos::variable<ikos::z_number, varname_t> z_var;
     typedef ikos::linear_expression<ikos::z_number, varname_t> lin_t;
     typedef ikos::linear_constraint<ikos::z_number, varname_t> lin_cst_t;
+    typedef ikos::linear_constraint_system<ikos::z_number, varname_t> lin_cst_sys_t;
 
   }
 
@@ -217,8 +219,8 @@ CResult walkStmt(const Stmt *S, unsigned &curvn, variable_factory_t &vf, basic_b
 
 class SVisitor : public RecursiveASTVisitor<SVisitor> {
 public:
-  typedef boost::bimap<z_var,Stmt *> CrabClangBimap;
-  typedef std::map<Stmt *,lin_cst_t> SCMap;
+  typedef boost::bimap<z_var,Stmt *>        CrabClangBimap;
+  typedef std::map<const Stmt *,lin_cst_t>  SCMap;
 private:
   basic_block_t       &Current;
   unsigned            &varPrefix;
@@ -299,19 +301,15 @@ public:
     auto RHS = unwrap(getResult(BO->getRHS()));
 
     // Store the result in a fresh temporary. 
-    z_var res = z_var(vfac[mkTempVarName(varPrefix, "_tmp")], INT_TYPE, 32);
+    z_var         res = z_var(vfac[mkTempVarName(varPrefix, "_tmp")], INT_TYPE, 32);
     switch(BO->getOpcode()) {
       case BO_Mul:
-        // Special case for mul, is it a scalar multiply?
-        if (false) {
-
-        }
-      // Non-linear cases
       case BO_Shr:
       case BO_Shl: 
       case BO_Rem:
       case BO_Div:
-        Current.havoc(res);
+        Current.havoc(res); // TODO: we can write this in to the crab CFG but 
+                            //       not as expressions.
         CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       // These generate assignment statements of some sort. 
@@ -352,6 +350,8 @@ public:
       case BO_NE:
         SCM.insert(make_pair(BO, LHS != RHS));
         break;
+      default:
+        llvm_unreachable("Unhandled opcode");
     } 
 
     return true;
@@ -383,9 +383,10 @@ public:
 
 class GVisitor : public RecursiveASTVisitor<GVisitor> {
 private:
-	ASTContext                        *Ctx;
-  variable_factory_t                vfac;
-  set<shared_ptr<cfg_t>>  cfgs;
+	ASTContext                *Ctx;
+  variable_factory_t        vfac;
+  set<shared_ptr<cfg_t>>    cfgs;
+  SVisitor::CrabClangBimap  CCB;
 
   // Make a string label for a basic block.
   string label(const CFGBlock &b) const {
@@ -410,10 +411,10 @@ private:
     auto &entry = cfg->getEntry();
     auto &exit = cfg->getExit();
 
-    SVisitor::CrabClangBimap  CCB;
-    SVisitor::SCMap           SCM;
-    vector<z_var>             cp;
-    vector<z_var>             rp; 
+    SVisitor::SCMap   SCM;
+    vector<z_var>     cp;
+    vector<z_var>     rp;
+    PostOrderCFGView  POCV(cfg.get());
 
     for (const auto &p : FD->parameters())
       cp.push_back(toP(p));
@@ -425,7 +426,7 @@ private:
 
     unsigned  varPrefix = 0;
     // One pass to make new blocks in the crab cfg. 
-    for (const auto &b : *cfg) 
+    for (const auto &b : POCV) 
       c->insert(label(*b));
     
     basic_block_t &crab_entry = c->get_node(label(entry));
@@ -433,17 +434,17 @@ private:
     crab_entry.havoc(returnV);
     crab_exit.ret(returnV);
 
-    for (const auto &b : *cfg) {
+    for (const auto &b : POCV) {
       basic_block_t &cur = c->get_node(label(*b));
       SVisitor      S(cur, varPrefix, CCB, SCM, vfac, Ctx->getSourceManager());
-      
+     
       for (const auto &s : *b) 
         if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
           S.TraverseStmt((Stmt *)orStmt.getValue().getStmt());
   
       vector<basic_block_t *> succs;
       // Add conditional control flow. 
-      for (const auto &s : b->succs()) {
+      for (const auto &s : b->succs()) 
         if (s) {
           basic_block_t &sb = c->get_node(label(*s));
           basic_block_t &assume_b = c->insert(label(*b) + "_to_" + label(*s));
@@ -455,12 +456,15 @@ private:
         } else {
           succs.push_back(nullptr);
         }
-      }
 
       // Switch on the form of the terminator, if present. 
       if (const Stmt *Term = b->getTerminator().getStmt()) {
         if (isa<WhileStmt>(Term) || isa<IfStmt>(Term)) {
-          auto I = SCM.find(b->getTerminatorCondition());
+          const Stmt *TS = b->getTerminatorCondition();
+          auto I = SCM.find(TS);
+          if (I == SCM.end()) 
+            if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(TS)) 
+              I = SCM.find(BO->getRHS());
           assert(I != SCM.end());
 
           if (succs[0])
@@ -471,9 +475,19 @@ private:
         } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
           // In each of the successor blocks, assume that the crab variable
           // for the terminating statement is equal to the lable. 
+        } else if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(Term)) {
+          // Sometimes, the terminator is BinaryOperator for && or ||.
+          auto I = SCM.find(BO->getLHS());
+          assert(I != SCM.end());
+
+          if (succs[0])
+            succs[0]->assume(I->second);
+
+          if (succs[1])
+            succs[1]->assume(I->second.negate());
         } else {
           Term->dump();
-          llvm::errs() << "Unknown terminator type!\n";
+          llvm_unreachable("Unknown terminator type!");
         }
       }
     }
@@ -482,10 +496,12 @@ private:
       c->simplify();
 
     return c;
-  } 
+  }
 
 public:
 	explicit GVisitor(ASTContext *C) : Ctx(C) {} 
+
+  SVisitor::CrabClangBimap  getMap(void) { return CCB; }
 
   bool VisitFunctionDecl(FunctionDecl *D) {
     variable_factory_t  vars;
@@ -536,6 +552,7 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
   for (const auto &D : C.getTranslationUnitDecl()->decls()) 
     V.TraverseDecl(D);
 
+  auto CCB = V.getMap();
   // Run analyzer. 
   for (auto &c : V.getCfgs()) {
     analyzer::apron_analyzer_t aa(*c, z_apron_domain_t::top()); 
@@ -544,7 +561,7 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
     for (auto &b : *c) {
 			auto pre = aa.get_pre (b.label ());
     	auto post = aa.get_post (b.label ());
-      
+  
      	crab::outs() << get_label_str (b.label ()) << "="
                << pre
                << " ==> "
