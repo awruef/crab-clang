@@ -229,8 +229,8 @@ private:
   variable_factory_t  &vfac;
   SourceManager       &SM;
 
-  typedef boost::variant<boost::blank, z_var, z_number> SResult;
-  typedef enum _SResultI { EMPTY, VAR, NUM} SResultI;
+  typedef boost::variant<boost::blank, z_var, z_number, lin_t> SResult;
+  typedef enum _SResultI { EMPTY, VAR, NUM, LIN} SResultI;
 
   z_var varFromDecl(ValueDecl *VD) {
     SourceRange VDSource = VD->getSourceRange();
@@ -248,12 +248,29 @@ private:
     } else if (IntegerLiteral *IL = dyn_cast<IntegerLiteral>(tE)) {
       // Don't need to do anything, just give back the number.
       return SResult(z_number(IL->getValue().getSExtValue()));
+    } else if (UnaryOperator *UO = dyn_cast<UnaryOperator>(tE)) {
+      auto sE = getResult(UO->getSubExpr());
+      assert(sE.which() != EMPTY);
+      switch(sE.which()) {
+        case EMPTY:
+          llvm_unreachable("infeasible");
+          break;
+        case NUM:
+          return SResult(z_number(-1)*boost::get<z_number>(sE));
+          break;
+        case VAR:
+          return SResult(z_number(-1)*boost::get<z_var>(sE));
+          break;
+        case LIN:
+          return SResult(z_number(-1)*boost::get<lin_t>(sE));
+          break;
+      }
     }
 
     // If it is not, then we need to find the statement that produced it 
     // somewhere. It should have already been produced and stored in the 
     // bimap.  
-    auto I = CCB.right.find(E);
+    auto I = CCB.right.find(tE);
     // We should be able to find it, if we can't, there has been an error.
     assert(I != CCB.right.end());
     return SResult(I->second);
@@ -269,6 +286,9 @@ private:
         break;
       case NUM:
         return lin_t(boost::get<z_number>(r));
+        break;
+      case LIN:
+        return boost::get<lin_t>(r);
         break;
     }
     llvm_unreachable("Should never get here");
