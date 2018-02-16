@@ -317,6 +317,8 @@ public:
   }
 
   bool VisitBinaryOperator(BinaryOperator *BO) {
+    auto uLHS = getResult(BO->getLHS());
+    auto uRHS = getResult(BO->getRHS());
     auto LHS = unwrap(getResult(BO->getLHS()));
     auto RHS = unwrap(getResult(BO->getRHS()));
 
@@ -343,12 +345,12 @@ public:
         break;
       case BO_AddAssign:
         Current.assign(res, LHS + RHS);
-        Current.assign(boost::get<z_var>(getResult(BO->getLHS())), LHS + RHS);
+        Current.assign(boost::get<z_var>(uLHS), LHS + RHS);
         CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       case BO_Assign:
         Current.assign(res, RHS);
-        Current.assign(boost::get<z_var>(getResult(BO->getLHS())), res);
+        Current.assign(boost::get<z_var>(uLHS), res);
         CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       // These generate constraints rather than statements. 

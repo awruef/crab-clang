@@ -58,4 +58,13 @@ we're that worse off.
 # progress?
 
 Very skeletal so far. We are exploring how to represent the AST in CRAB. 
-Right now, it only works for the ludicrously simple example program. 
+Right now, it only works for the ludicrously simple example programs. 
+
+# to do
+
+1. Re-treat types, right now everything is `INT_TYPE` of 32 bit width. 
+   We should go back to pulling out types from `QualType`.
+2. How do we represent struct types? 
+3. Add tests with multiple functions and instantiate an interprocedural 
+   analyzer.
+4. Project analyzer results onto the original source code via re-writing.
