@@ -123,11 +123,13 @@ class SVisitor : public RecursiveASTVisitor<SVisitor> {
 public:
   typedef boost::bimap<z_var,Stmt *>        CrabClangBimap;
   typedef std::map<const Stmt *,lin_cst_t>  SCMap;
+  typedef std::map<string, const Stmt *>    CrabStMap;
 private:
   basic_block_t       &Current;
   unsigned            &varPrefix;
   CrabClangBimap      &CCB;
   SCMap               &SCM;
+  CrabStMap           &CSM;
   variable_factory_t  &vfac;
   SourceManager       &SM;
 
@@ -201,9 +203,10 @@ public:
             unsigned            &V, 
             CrabClangBimap      &B, 
             SCMap               &M,
+            CrabStMap           &U,
             variable_factory_t  &F,
             SourceManager       &S) : 
-    Current(C),varPrefix(V),CCB(B),SCM(M),vfac(F),SM(S) { } 
+    Current(C),varPrefix(V),CCB(B),SCM(M),CSM(U),vfac(F),SM(S) { } 
 
   bool shouldTraversePostOrder() const { return true; }
 
@@ -226,6 +229,7 @@ public:
 
     // Store the result in a fresh temporary. 
     z_var         res = z_var(vfac[mkTempVarName(varPrefix, "_tmp")], INT_TYPE, 32);
+    
     switch(BO->getOpcode()) {
       case BO_Mul:
       case BO_Shr:
@@ -247,7 +251,7 @@ public:
         break;
       case BO_AddAssign:
         Current.assign(res, LHS + RHS);
-        Current.assign(boost::get<z_var>(uLHS), LHS + RHS);
+        Current.assign(boost::get<z_var>(uLHS), res);
         CCB.insert(CrabClangBimap::value_type(res, BO));
         break;
       case BO_Assign:
@@ -311,6 +315,8 @@ private:
   variable_factory_t        vfac;
   set<shared_ptr<cfg_t>>    cfgs;
   SVisitor::CrabClangBimap  CCB;
+  SVisitor::SCMap           SCM;
+  SVisitor::CrabStMap       CSM;
 
   // Make a string label for a basic block.
   string label(const CFGBlock &b) const {
@@ -335,7 +341,6 @@ private:
     auto &entry = cfg->getEntry();
     auto &exit = cfg->getExit();
 
-    SVisitor::SCMap   SCM;
     vector<z_var>     cp;
     vector<z_var>     rp;
     PostOrderCFGView  POCV(cfg.get());
@@ -355,18 +360,30 @@ private:
     
     basic_block_t &crab_entry = c->get_node(label(entry));
     basic_block_t &crab_exit = c->get_node(label(exit));
+
+    // Set up the return values.
     crab_entry.havoc(returnV);
     crab_exit.ret(returnV);
 
     for (const auto &b : POCV) {
       basic_block_t &cur = c->get_node(label(*b));
-      SVisitor      S(cur, varPrefix, CCB, SCM, vfac, Ctx->getSourceManager());
-     
+      SVisitor      S(cur, varPrefix, CCB, SCM, CSM, vfac, Ctx->getSourceManager());
+
+      // Populate the map from crab basic blocks to statements.  
+      const Stmt *Beginning = nullptr;
       for (const auto &s : *b) 
-        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) 
-          S.TraverseStmt((Stmt *)orStmt.getValue().getStmt());
-  
-      vector<basic_block_t *> succs;
+        if (Optional<CFGStmt>   orStmt = s.getAs<CFGStmt>()) {
+          const Stmt *St = orStmt.getValue().getStmt();
+          S.TraverseStmt((Stmt *)St);
+          if (Beginning == nullptr)
+            Beginning = St;
+        }
+   
+      if (Beginning)
+        CSM.insert(make_pair(label(*b), Beginning));
+
+      vector<basic_block_t *>   succs;
+      vector<const CFGBlock *>  csuccs;
       // Add conditional control flow. 
       for (const auto &s : b->succs()) 
         if (s) {
@@ -377,28 +394,57 @@ private:
           cur >> assume_b;
           assume_b >> sb;
           succs.push_back(&assume_b);
+          csuccs.push_back(s);
         } else {
           succs.push_back(nullptr);
+          csuccs.push_back(nullptr);
         }
 
       // Switch on the form of the terminator, if present. 
       if (const Stmt *Term = b->getTerminator().getStmt()) {
         if (isa<WhileStmt>(Term) || isa<IfStmt>(Term)) {
+          const Stmt *Body = nullptr;
+          const Stmt *Else = nullptr;
+          if (const WhileStmt *WS = dyn_cast<WhileStmt>(Term)) {
+            Body = WS->getBody();
+
+            // If we have a successor in the 'else' case, use that to get the 
+            // 'else' branch of the while loop, since it isn't in the AST. 
+            if (csuccs[1])
+              for (const auto &t : *csuccs[1])
+                if (Optional<CFGStmt>   orStmt = t.getAs<CFGStmt>()) {
+                  Else = orStmt.getPointer()->getStmt();
+                  break;
+                }
+          } else if (const IfStmt *IS = dyn_cast<IfStmt>(Term)) {
+            Body = IS->getThen();
+            Else = IS->getElse();
+          }
+
           const Stmt *TS = b->getTerminatorCondition();
+          assert(TS != nullptr);
           auto I = SCM.find(TS);
           if (I == SCM.end()) 
             if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(TS)) 
               I = SCM.find(BO->getRHS());
           assert(I != SCM.end());
 
-          if (succs[0])
+          if (succs[0]) {
             succs[0]->assume(I->second);
+            if (Body)
+              CSM.insert(make_pair(succs[0]->name(), Body));
+          }
 
-          if (succs[1])
+          if (succs[1]) {
             succs[1]->assume(I->second.negate());
+
+            if (Else)
+              CSM.insert(make_pair(succs[1]->name(), Else));
+          }
         } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
           // In each of the successor blocks, assume that the crab variable
           // for the terminating statement is equal to the lable. 
+          llvm_unreachable("NIY"); 
         } else if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(Term)) {
           // Sometimes, the terminator is BinaryOperator for && or ||.
           auto I = SCM.find(BO->getLHS());
@@ -425,19 +471,19 @@ private:
 public:
 	explicit GVisitor(ASTContext *C) : Ctx(C) {} 
 
-  SVisitor::CrabClangBimap  getMap(void) { return CCB; }
+  SVisitor::CrabStMap getMap(void) { return CSM; }
 
   bool VisitFunctionDecl(FunctionDecl *D) {
     variable_factory_t  vars;
 
     if (D->hasBody() && D->isThisDeclarationADefinition()) {
       CFG::BuildOptions BO;
-      unique_ptr<CFG>  cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
+      auto              cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
 
-      if (cfg ) {
+      if (cfg) {
         if (Verbose)
           cfg->dump(Ctx->getLangOpts(), true);
-        shared_ptr<cfg_t> crabCfg = toCrab(cfg, D);
+        auto crabCfg = toCrab(cfg, D);
 
         if (Verbose)
           if (crabCfg)
@@ -476,23 +522,32 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
   for (const auto &D : C.getTranslationUnitDecl()->decls()) 
     V.TraverseDecl(D);
 
-  auto CCB = V.getMap();
+  auto          CSM = V.getMap();
+  SourceManager &SM = Ctx->getSourceManager();
+  Rewriter      R(SM, Ctx->getLangOpts());
   // Run analyzer. 
   for (auto &c : V.getCfgs()) {
     analyzer::apron_analyzer_t aa(*c, z_apron_domain_t::top()); 
     aa.run();
 
     for (auto &b : *c) {
-			auto pre = aa.get_pre (b.label ());
-    	auto post = aa.get_post (b.label ());
-  
-     	crab::outs() << get_label_str (b.label ()) << "="
-               << pre
-               << " ==> "
-               << post << "\n";
+    	auto post = aa.get_post (b.label());
+ 
+      const Stmt *St = nullptr;
+      auto I = CSM.find(b.label());
+      if (I != CSM.end())
+        St = I->second;
+      if (St) {
+        llvm::errs() << b.label() << ":\n";
+        St->dump();
+        // Pretty print 'post' at 'St. 
+        R.InsertText(St->getLocStart(), "/*"+b.label()+"*/\n", false, true);
+      } 
     }
   }
 
+  if (const RewriteBuffer *B = R.getRewriteBufferFor(SM.getMainFileID()))
+    B->write(llvm::outs());
   return;
 }
 

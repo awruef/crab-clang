@@ -7,7 +7,7 @@ CXXFLAGS = $(shell $(CONFIG) --cxxflags) -g -ggdb
 LDFLAGS = $(shell $(CONFIG) --ldflags) -L$(CRAB_ROOT)/lib -L$(APRON_ROOT)/lib
 LLVM_LIBS = $(shell $(CONFIG) --libs)
 SYSLIBS = $(shell $(CONFIG) --system-libs)
-LIBS = -lclangTooling -lclangFrontend -lclangDriver -lclangSerialization -lclangParse -lclangSema -lclangAnalysis -lclangAST -lclangEdit -lclangLex -lclangCodeGen -lclangBasic -lCrab -lpolkaMPQ -loctD -lapron -lgmp
+LIBS = -lclangTooling -lclangFrontend -lclangRewrite -lclangRewriteFrontend -lclangDriver -lclangSerialization -lclangParse -lclangSema -lclangAnalysis -lclangAST -lclangEdit -lclangLex -lclangCodeGen -lclangBasic -lCrab -lpolkaMPQ -loctD -lapron -lgmp
 
 all: crabclang
 
