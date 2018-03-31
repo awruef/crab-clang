@@ -545,6 +545,8 @@ public:
         return na.get_post(n).to_linear_constraint_system();
         break;
     }
+
+    return lin_cst_sys_t();
   }
 };
 
