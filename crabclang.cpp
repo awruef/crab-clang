@@ -515,8 +515,38 @@ private:
 	string	File;
 };
 
+class AnalyzerSwitcher {
+public:
+  enum AnalyzerKind {
+    Apron,
+    Interval
+  };
+
+private:
+  AnalyzerKind _kind;
+public:
+
+  AnalyzerSwitch(AnalyerKind k ) : _kind(k) { } 
+
+  void run(shared_ptr<cfg_t>  cfg) {
+    switch(_kind) {
+      case Apron:
+        {
+          analyzer::apron_analyzer_t aa(*cfg, z_apron_domain_t::top());
+          aa.run();
+        }
+        break;
+      case Interval:
+        {
+        }
+        break;
+    }
+  }
+};
+
 void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
-  GVisitor	V(&C);
+  GVisitor	        V(&C);
+  AnalyzerSwitcher  a(AnalyzerSwitcher::Apron);
 
   // Build up CFG. 
   for (const auto &D : C.getTranslationUnitDecl()->decls()) 
@@ -527,11 +557,10 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
   Rewriter      R(SM, Ctx->getLangOpts());
   // Run analyzer. 
   for (auto &c : V.getCfgs()) {
-    analyzer::apron_analyzer_t aa(*c, z_apron_domain_t::top()); 
-    aa.run();
+    a.run(c);
 
     for (auto &b : *c) {
-    	auto post = aa.get_post (b.label());
+    	//auto post = aa.get_post (b.label());
  
       const Stmt *St = nullptr;
       auto I = CSM.find(b.label());
