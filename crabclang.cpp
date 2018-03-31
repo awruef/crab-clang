@@ -88,13 +88,6 @@ public:
   }
 };
 
-typedef boost::variant<boost::blank, lin_t, lin_cst_t> CResult;
-typedef enum _CResultI {
-  EMPTY,
-  EXPR,
-  CONSTRAINT
-} CResultI;
-
 // Convert a clang type to a crab type. 
 variable_type clangToCrabTy(QualType T) {
   if (T->isPointerType())
@@ -523,30 +516,49 @@ public:
   };
 
 private:
-  AnalyzerKind _kind;
+  AnalyzerKind                _kind;
+  analyzer::apron_analyzer_t  aa;
+  analyzer::num_analyzer_t    na;
 public:
 
-  AnalyzerSwitch(AnalyerKind k ) : _kind(k) { } 
+  AnalyzerSwitcher(AnalyzerKind k, shared_ptr<cfg_t> cfg) : _kind(k),
+    aa(*cfg, z_apron_domain_t::top()),
+    na(*cfg, z_interval_domain_t::top()) { }
 
-  void run(shared_ptr<cfg_t>  cfg) {
+  void run() {
     switch(_kind) {
       case Apron:
-        {
-          analyzer::apron_analyzer_t aa(*cfg, z_apron_domain_t::top());
-          aa.run();
-        }
+        aa.run();
         break;
       case Interval:
-        {
-        }
+        na.run();
+        break;
+    }
+  }
+
+  lin_cst_sys_t invaraints_at_point(basic_block_label_t n) {
+    switch(_kind) {
+      case Apron:
+        return aa.get_post(n).to_linear_constraint_system();
+        break;
+      case Interval:
+        return na.get_post(n).to_linear_constraint_system();
         break;
     }
   }
 };
 
+cl::opt<AnalyzerSwitcher::AnalyzerKind> AnalyzerDomain(
+  "analyzer-domain",
+	cl::desc("Choose analyzer domain:"),
+  cl::init(AnalyzerSwitcher::Apron),
+  cl::cat(CrabCat),
+  cl::values(
+    clEnumValN(AnalyzerSwitcher::Apron, "APRON", "Use the APRON domain"),
+    clEnumValN(AnalyzerSwitcher::Interval, "Interavals", "Use the interval domain")));
+
 void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
   GVisitor	        V(&C);
-  AnalyzerSwitcher  a(AnalyzerSwitcher::Apron);
 
   // Build up CFG. 
   for (const auto &D : C.getTranslationUnitDecl()->decls()) 
@@ -557,10 +569,11 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
   Rewriter      R(SM, Ctx->getLangOpts());
   // Run analyzer. 
   for (auto &c : V.getCfgs()) {
-    a.run(c);
+    AnalyzerSwitcher  a(AnalyzerDomain, c);
+    a.run();
 
     for (auto &b : *c) {
-    	//auto post = aa.get_post (b.label());
+      auto post = a.invaraints_at_point(b.label());
  
       const Stmt *St = nullptr;
       auto I = CSM.find(b.label());
