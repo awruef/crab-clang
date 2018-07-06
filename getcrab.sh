@@ -22,7 +22,7 @@ get_repo () {
   fi
 }
 
-get_repo "master" git@github.com:seahorn/crab.git $BASE_DIR
+get_repo "master" https://github.com/seahorn/crab.git $BASE_DIR
 
 if [ -d "$BUILD_DIR" ]; then
   pushd .

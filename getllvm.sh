@@ -23,16 +23,16 @@ get_repo () {
   fi
 }
 
-get_repo $BRANCH git@github.com:llvm-mirror/llvm.git $BASE_DIR
-get_repo $BRANCH git@github.com:llvm-mirror/clang.git $BASE_DIR/tools/clang
-get_repo $BRANCH git@github.com:llvm-mirror/lldb.git $BASE_DIR/tools/lldb
-get_repo $BRANCH git@github.com:llvm-mirror/lld.git $BASE_DIR/tools/lld
-get_repo $BRANCH git@github.com:llvm-mirror/polly.git $BASE_DIR/tools/polly
-get_repo $BRANCH git@github.com:llvm-mirror/clang-tools-extra.git $BASE_DIR/tools/clang/tools/extra
-get_repo $BRANCH git@github.com:llvm-mirror/compiler-rt.git $BASE_DIR/runtimes/compiler-rt
-get_repo $BRANCH git@github.com:llvm-mirror/libcxx.git $BASE_DIR/projects/libcxx
-get_repo $BRANCH git@github.com:llvm-mirror/libcxxabi.git $BASE_DIR/projects/libcxxabi
-get_repo $BRANCH git@github.com:llvm-mirror/libunwind.git $BASE_DIR/projects/libunwind
+get_repo $BRANCH https://github.com/llvm-mirror/llvm.git $BASE_DIR
+get_repo $BRANCH https://github.com/llvm-mirror/clang.git $BASE_DIR/tools/clang
+get_repo $BRANCH https://github.com/llvm-mirror/lldb.git $BASE_DIR/tools/lldb
+get_repo $BRANCH https://github.com/llvm-mirror/lld.git $BASE_DIR/tools/lld
+get_repo $BRANCH https://github.com/llvm-mirror/polly.git $BASE_DIR/tools/polly
+get_repo $BRANCH https://github.com/llvm-mirror/clang-tools-extra.git $BASE_DIR/tools/clang/tools/extra
+get_repo $BRANCH https://github.com/llvm-mirror/compiler-rt.git $BASE_DIR/runtimes/compiler-rt
+get_repo $BRANCH https://github.com/llvm-mirror/libcxx.git $BASE_DIR/projects/libcxx
+get_repo $BRANCH https://github.com/llvm-mirror/libcxxabi.git $BASE_DIR/projects/libcxxabi
+get_repo $BRANCH https://github.com/llvm-mirror/libunwind.git $BASE_DIR/projects/libunwind
 
 if [ -d "$BUILD_DIR" ]; then
   pushd .
