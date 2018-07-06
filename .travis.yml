@@ -1,5 +1,6 @@
 language: cpp
 before_install: 
+  - "sudo apt-get install ninja-build"
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
 cache: 

@@ -25,26 +25,26 @@ get_repo () {
 
 get_repo $BRANCH https://github.com/llvm-mirror/llvm.git $BASE_DIR
 get_repo $BRANCH https://github.com/llvm-mirror/clang.git $BASE_DIR/tools/clang
-get_repo $BRANCH https://github.com/llvm-mirror/polly.git $BASE_DIR/tools/polly
-get_repo $BRANCH https://github.com/llvm-mirror/clang-tools-extra.git $BASE_DIR/tools/clang/tools/extra
-get_repo $BRANCH https://github.com/llvm-mirror/compiler-rt.git $BASE_DIR/runtimes/compiler-rt
-get_repo $BRANCH https://github.com/llvm-mirror/libcxx.git $BASE_DIR/projects/libcxx
-get_repo $BRANCH https://github.com/llvm-mirror/libcxxabi.git $BASE_DIR/projects/libcxxabi
-get_repo $BRANCH https://github.com/llvm-mirror/libunwind.git $BASE_DIR/projects/libunwind
+#get_repo $BRANCH https://github.com/llvm-mirror/polly.git $BASE_DIR/tools/polly
+#get_repo $BRANCH https://github.com/llvm-mirror/clang-tools-extra.git $BASE_DIR/tools/clang/tools/extra
+#get_repo $BRANCH https://github.com/llvm-mirror/compiler-rt.git $BASE_DIR/runtimes/compiler-rt
+#get_repo $BRANCH https://github.com/llvm-mirror/libcxx.git $BASE_DIR/projects/libcxx
+#get_repo $BRANCH https://github.com/llvm-mirror/libcxxabi.git $BASE_DIR/projects/libcxxabi
+#get_repo $BRANCH https://github.com/llvm-mirror/libunwind.git $BASE_DIR/projects/libunwind
 
 if [ -d "$BUILD_DIR" ]; then
   pushd .
   cd $BUILD_DIR
   cmake $BASE_DIR
-  make 
-  make install
+  ninja all
+  ninja install
   popd
 else
   mkdir $BUILD_DIR
   pushd .
   cd $BUILD_DIR
-  cmake -DLLVM_ENABLE_RTTI=1 -DLLVM_ENABLE_EH=1 -DLLVM_TARGETS_TO_BUILD=X86 -DCMAKE_PREFIX_PATH=~/local/z3 -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DLLVM_PARALLEL_LINK_JOBS=4 $BASE_DIR
-  make 
-  make install
+  cmake -G Ninja -DLLVM_ENABLE_RTTI=1 -DLLVM_ENABLE_EH=1 -DLLVM_TARGETS_TO_BUILD=X86 -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DLLVM_PARALLEL_LINK_JOBS=4 $BASE_DIR
+  ninja all
+  ninja install
   popd
 fi
