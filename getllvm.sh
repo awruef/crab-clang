@@ -36,15 +36,15 @@ if [ -d "$BUILD_DIR" ]; then
   pushd .
   cd $BUILD_DIR
   cmake $BASE_DIR
-  ninja all
-  ninja install
+  make 
+  make install
   popd
 else
   mkdir $BUILD_DIR
   pushd .
   cd $BUILD_DIR
   cmake -DLLVM_ENABLE_RTTI=1 -DLLVM_ENABLE_EH=1 -DLLVM_TARGETS_TO_BUILD=X86 -DCMAKE_PREFIX_PATH=~/local/z3 -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DLLVM_PARALLEL_LINK_JOBS=4 $BASE_DIR
-  ninja all 
-  ninja install
+  make 
+  make install
   popd
 fi
