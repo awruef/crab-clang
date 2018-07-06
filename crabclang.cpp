@@ -28,6 +28,8 @@
 #include <boost/variant.hpp>
 #include <boost/bimap.hpp>
 
+#include <optional>
+
 using namespace std;
 
 // Define types for crab. 
@@ -474,13 +476,15 @@ public:
       auto              cfg = CFG::buildCFG(D, D->getBody(), Ctx, BO);
 
       if (cfg) {
-        if (Verbose)
+        if (Verbose) {
+          D->dump();
           cfg->dump(Ctx->getLangOpts(), true);
+        }
         auto crabCfg = toCrab(cfg, D);
 
         if (Verbose)
           if (crabCfg)
-            crab::outs() << *crabCfg;
+            crab::errs() << *crabCfg;
         
         if (crabCfg) {
           cfgs.insert(crabCfg);
@@ -536,7 +540,7 @@ public:
     }
   }
 
-  lin_cst_sys_t invaraints_at_point(basic_block_label_t n) {
+  lin_cst_sys_t invariants_at_point(basic_block_label_t n) {
     switch(_kind) {
       case Apron:
         return aa.get_post(n).to_linear_constraint_system();
@@ -548,7 +552,47 @@ public:
 
     return lin_cst_sys_t();
   }
+
+  string invariants_to_c(const lin_cst_sys_t &csts);
+  string invariant_to_c(const lin_cst_t &c);
+  string expr_to_c(const lin_t &e);
 };
+
+string AnalyzerSwitcher::invariants_to_c(const lin_cst_sys_t &csts) {
+  string result = "";
+
+  for (auto &c : csts) {
+    result = result + "," + invariant_to_c(c);
+  }
+
+  return result;
+}
+
+string AnalyzerSwitcher::invariant_to_c(const lin_cst_t &c) {
+  string res = "";
+
+  switch (c.kind()) {
+    case lin_cst_t::EQUALITY:
+      res = res + expr_to_c(c.expression()) + " = 0;";
+      break;
+    case lin_cst_t::STRICT_INEQUALITY:
+      res = res + expr_to_c(c.expression())+ " < 0;";
+      break;
+    case lin_cst_t::INEQUALITY:
+      res = res + expr_to_c(c.expression()) + " <= 0;";
+      break;
+    case lin_cst_t::DISEQUATION:
+      res = res + expr_to_c(c.expression()) + " != 0";
+      break;
+  }
+
+  return res;
+}
+
+string AnalyzerSwitcher::expr_to_c(const lin_t &e) {
+  return "";
+}
+
 
 cl::opt<AnalyzerSwitcher::AnalyzerKind> AnalyzerDomain(
   "analyzer-domain",
@@ -575,17 +619,27 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
     a.run();
 
     for (auto &b : *c) {
-      auto post = a.invaraints_at_point(b.label());
+      auto post = a.invariants_at_point(b.label());
  
       const Stmt *St = nullptr;
       auto I = CSM.find(b.label());
       if (I != CSM.end())
         St = I->second;
       if (St) {
-        llvm::errs() << b.label() << ":\n";
-        St->dump();
+        //llvm::errs() << "At CRAB label: " << b.label() << ":\n";
+        //St->dump();
+        SourceLocation sl = St->getLocStart();
+        // Let's look at what kind of Stmt St is.
+        if (const IfStmt *If = dyn_cast<const IfStmt>(St)) {
+          sl = If->getThen()->getLocStart();
+        } else if (const CompoundStmt *Cmp = dyn_cast<const CompoundStmt>(St)) {
+          sl = Cmp->getLBracLoc();
+        }
         // Pretty print 'post' at 'St. 
-        R.InsertText(St->getLocStart(), "/*"+b.label()+"*/\n", false, true);
+        //sl.dump(Ctx->getSourceManager());
+        //llvm::errs() << "\n";
+        string ex = a.invariants_to_c(post);
+        R.InsertText(sl, "/*"+ex+"*/", true, true);
       } 
     }
   }

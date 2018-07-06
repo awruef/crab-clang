@@ -25,8 +25,6 @@ get_repo () {
 
 get_repo $BRANCH https://github.com/llvm-mirror/llvm.git $BASE_DIR
 get_repo $BRANCH https://github.com/llvm-mirror/clang.git $BASE_DIR/tools/clang
-get_repo $BRANCH https://github.com/llvm-mirror/lldb.git $BASE_DIR/tools/lldb
-get_repo $BRANCH https://github.com/llvm-mirror/lld.git $BASE_DIR/tools/lld
 get_repo $BRANCH https://github.com/llvm-mirror/polly.git $BASE_DIR/tools/polly
 get_repo $BRANCH https://github.com/llvm-mirror/clang-tools-extra.git $BASE_DIR/tools/clang/tools/extra
 get_repo $BRANCH https://github.com/llvm-mirror/compiler-rt.git $BASE_DIR/runtimes/compiler-rt
