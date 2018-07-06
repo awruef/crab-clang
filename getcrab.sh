@@ -24,18 +24,15 @@ get_repo () {
 
 get_repo "master" https://github.com/seahorn/crab.git $BASE_DIR
 
-if [ -d "$BUILD_DIR" ]; then
-  pushd .
-  cd $BUILD_DIR
-  cmake --build . --target install
-  popd
-else
+if [ ! -d "$BUILD_DIR" ]; then
   mkdir $BUILD_DIR
-  pushd .
-  cd $BUILD_DIR
-	cmake -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DUSE_LDD=ON -DUSE_APRON=ON -DENABLE_TESTS=ON $BASE_DIR
-  cmake --build . --target ldd && cmake $BASE_DIR
-  cmake --build . --target apron && cmake $BASE_DIR
-  cmake --build . --target install
-  popd
 fi
+
+pushd .
+cd $BUILD_DIR
+cmake -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DUSE_LDD=ON -DUSE_APRON=ON -DENABLE_TESTS=ON $BASE_DIR
+cmake --build . --target ldd && cmake $BASE_DIR
+cmake --build . --target apron && cmake $BASE_DIR
+cmake --build . --target install
+popd
+

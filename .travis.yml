@@ -5,6 +5,11 @@ before_install:
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
 cache: 
   directories: 
-    - "$PWD/llvm38-install - $PWD/crab-install - $PWD/crab.obj - $PWD/crab"
+    - "$PWD/llvm38-install" 
+    - "$PWD/crab-install" 
+    - "$PWD/crab.obj" 
+    - "$PWD/crab"
+    - "$PWD/llvm38.obj"
+    - "$PWD/llvm38"
 script: 
   - "APRON_ROOT=$PWD/crab.obj/run/apron CONFIG=$PWD/llvm38-install/bin/llvm-config make"
