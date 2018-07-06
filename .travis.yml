@@ -1,0 +1,15 @@
+language: c++
+
+cache:
+  directories:
+    - $PWD/llvm38-install
+		- $PWD/crab-install
+		- $PWD/crab.obj
+		- $PWD/crab
+
+before_install:
+  - ./getllvm.sh "release_38" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install
+  - ./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install
+
+script:
+  - APRON_ROOT=$PWD/crab.obj/run/apron CONFIG=$PWD/llvm38-install/bin/llvm-config make
