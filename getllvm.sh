@@ -12,13 +12,7 @@ get_repo () {
   REPO=$2
   OUTDIR=$3
   if [ -d "$OUTDIR" ]; then
-    pushd .
-    cd $OUTDIR
-    git pull
-    git branch -a 
-    git checkout $BR
     git pull 
-    popd
   else
     git clone -b $BR $REPO $OUTDIR
   fi
