@@ -15,6 +15,7 @@ get_repo () {
     pushd .
     cd $OUTDIR
     git pull
+    git branch -a 
     git checkout $BR
     git pull 
     popd
