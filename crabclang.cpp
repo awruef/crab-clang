@@ -116,7 +116,7 @@ string mkTempVarName(unsigned &curVn, string baseName) {
 
 class SVisitor : public RecursiveASTVisitor<SVisitor> {
 public:
-  typedef boost::bimap<z_var,Stmt *>        CrabClangBimap;
+  typedef boost::bimap<z_var,const Stmt *>  CrabClangBimap;
   typedef std::map<const Stmt *,lin_cst_t>  SCMap;
   typedef std::map<string, const Stmt *>    CrabStMap;
 private:
@@ -128,26 +128,28 @@ private:
   variable_factory_t  &vfac;
   SourceManager       &SM;
 
+public:
   typedef boost::variant<boost::blank, z_var, z_number, lin_t> SResult;
   typedef enum _SResultI { EMPTY, VAR, NUM, LIN} SResultI;
 
-  z_var varFromDecl(ValueDecl *VD) {
-    SourceRange VDSource = VD->getSourceRange();
-    bool        inv = false;
-    unsigned i = SM.getSpellingLineNumber(VDSource.getBegin(), &inv);
-    auto VarName = VD->getNameAsString();
+  z_var varFromDecl(const ValueDecl *VD) {
+    const SourceRange VDSource = VD->getSourceRange();
+    bool              inv = false;
+    unsigned          i = SM.getSpellingLineNumber(VDSource.getBegin(), &inv);
+    auto              VarName = VD->getNameAsString();
+
     return z_var(vfac[VarName+"_"+to_string(i)], INT_TYPE, 32);
   }
 
-  SResult getResult(Expr *E) {
+  SResult getResult(const Expr *E) {
     auto *tE = E->IgnoreParenImpCasts();
     // Is E a direct variable reference of something? Just return the variable.
-    if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(tE)) {
+    if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(tE)) {
       return SResult(varFromDecl(DRE->getDecl()));
-    } else if (IntegerLiteral *IL = dyn_cast<IntegerLiteral>(tE)) {
+    } else if (const IntegerLiteral *IL = dyn_cast<IntegerLiteral>(tE)) {
       // Don't need to do anything, just give back the number.
       return SResult(z_number(IL->getValue().getSExtValue()));
-    } else if (UnaryOperator *UO = dyn_cast<UnaryOperator>(tE)) {
+    } else if (const UnaryOperator *UO = dyn_cast<UnaryOperator>(tE)) {
       auto sE = getResult(UO->getSubExpr());
       assert(sE.which() != EMPTY);
       switch(sE.which()) {
@@ -193,7 +195,6 @@ private:
     llvm_unreachable("Should never get here");
   }
 
-public:
   SVisitor( basic_block_t       &C, 
             unsigned            &V, 
             CrabClangBimap      &B, 
@@ -438,8 +439,20 @@ private:
           }
         } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
           // In each of the successor blocks, assume that the crab variable
-          // for the terminating statement is equal to the lable. 
-          llvm_unreachable("NIY"); 
+          // for the terminating statement is equal to the label. 
+          auto Cond = S.getResult(Switch->getCond());
+          assert(Cond.which() != SVisitor::EMPTY);
+          auto CondVar = S.unwrap(Cond);
+          assert(succs.size() == csuccs.size());
+          for (unsigned i = 0; i < succs.size(); i++) {
+            auto CrabBB = succs[i];
+            auto Label = dyn_cast<CaseStmt>(csuccs[i]->getLabel());
+            if (Label != nullptr) {
+              assert(Label->getLHS() != nullptr);
+              auto V = S.unwrap(S.getResult(Label->getLHS()));
+              succs[i]->assume(CondVar == V);
+            } 
+          }
         } else if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(Term)) {
           // Sometimes, the terminator is BinaryOperator for && or ||.
           auto I = SCM.find(BO->getLHS());
