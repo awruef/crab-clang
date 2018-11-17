@@ -451,7 +451,10 @@ private:
               assert(Label->getLHS() != nullptr);
               auto V = S.unwrap(S.getResult(Label->getLHS()));
               succs[i]->assume(CondVar == V);
-            } 
+            }
+            // TODO: It would be nice to save up all of the assumptions we
+            //       made and then injected their negations in the 
+            //       'default' case. 
           }
         } else if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(Term)) {
           // Sometimes, the terminator is BinaryOperator for && or ||.
