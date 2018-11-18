@@ -46,6 +46,7 @@ namespace crab {
     typedef cfg::cfg_rev<cfg_ref_t> cfg_rev_t;
     typedef cfg_t::basic_block_t basic_block_t;
     typedef ikos::variable<ikos::z_number, varname_t> z_var;
+    typedef cfg::function_decl<ikos::z_number, varname_t> z_func;
     typedef ikos::linear_expression<ikos::z_number, varname_t> lin_t;
     typedef ikos::linear_constraint<ikos::z_number, varname_t> lin_cst_t;
     typedef ikos::linear_constraint_system<ikos::z_number, varname_t> lin_cst_sys_t;
@@ -116,15 +117,17 @@ string mkTempVarName(unsigned &curVn, string baseName) {
 
 class SVisitor : public RecursiveASTVisitor<SVisitor> {
 public:
-  typedef boost::bimap<z_var,const Stmt *>  CrabClangBimap;
-  typedef std::map<const Stmt *,lin_cst_t>  SCMap;
-  typedef std::map<string, const Stmt *>    CrabStMap;
+  typedef boost::bimap<z_var,const Stmt *>                    CrabClangBimap;
+  typedef std::map<const Stmt *,lin_cst_t>                    SCMap;
+  typedef std::map<string, const Stmt *>                      CrabStMap;
+  typedef std::map<const FunctionDecl *,shared_ptr<z_func> >  FDToFunc;
 private:
   basic_block_t       &Current;
   unsigned            &varPrefix;
   CrabClangBimap      &CCB;
   SCMap               &SCM;
   CrabStMap           &CSM;
+  FDToFunc            &FTF;
   variable_factory_t  &vfac;
   SourceManager       &SM;
 
@@ -200,9 +203,10 @@ public:
             CrabClangBimap      &B, 
             SCMap               &M,
             CrabStMap           &U,
+            FDToFunc            &FM,
             variable_factory_t  &F,
             SourceManager       &S) : 
-    Current(C),varPrefix(V),CCB(B),SCM(M),CSM(U),vfac(F),SM(S) { } 
+    Current(C),varPrefix(V),CCB(B),SCM(M),CSM(U),FTF(FM),vfac(F),SM(S) { } 
 
   bool shouldTraversePostOrder() const { return true; }
 
@@ -323,6 +327,7 @@ private:
   SVisitor::CrabClangBimap  CCB;
   SVisitor::SCMap           SCM;
   SVisitor::CrabStMap       CSM;
+  SVisitor::FDToFunc        FTF;
 
   // Make a string label for a basic block.
   string label(const CFGBlock &b) const {
@@ -356,8 +361,10 @@ private:
     auto returnV = toR(FD->getReturnType());
     rp.push_back(returnV);
 
-    function_decl<z_number, varname_t> CD(FD->getNameAsString(), cp, rp);
-    shared_ptr<cfg_t> c(new cfg_t(label(entry), label(exit), CD));
+    shared_ptr<z_func> CD(new z_func(FD->getNameAsString(), cp, rp));
+    if(!FTF.insert(make_pair(FD, CD)).second)
+      CD = FTF[FD];
+    shared_ptr<cfg_t> c(new cfg_t(label(entry), label(exit), *CD));
 
     unsigned  varPrefix = 0;
     // One pass to make new blocks in the crab cfg. 
@@ -372,7 +379,7 @@ private:
     crab_exit.ret(returnV);
 
     // Set up local copies of the parameters. 
-    SVisitor Se(crab_entry, varPrefix, CCB, SCM, CSM, vfac, Ctx->getSourceManager());
+    SVisitor Se(crab_entry, varPrefix, CCB, SCM, CSM, FTF, vfac, Ctx->getSourceManager());
     for (const auto &p : FD->parameters()) {
       z_var lp = Se.varFromDecl(p);
       z_var pp = toP(p);
@@ -381,7 +388,7 @@ private:
 
     for (const auto &b : POCV) {
       basic_block_t &cur = c->get_node(label(*b));
-      SVisitor      S(cur, varPrefix, CCB, SCM, CSM, vfac, Ctx->getSourceManager());
+      SVisitor      S(cur, varPrefix, CCB, SCM, CSM, FTF, vfac, Ctx->getSourceManager());
 
       // Populate the map from crab basic blocks to statements.  
       const Stmt *Beginning = nullptr;
@@ -466,7 +473,6 @@ private:
           assert(succs.size() == csuccs.size());
 
           for (unsigned i = 0; i < succs.size(); i++) {
-            auto CrabBB = succs[i];
             auto Label = dyn_cast<CaseStmt>(csuccs[i]->getLabel());
             if (Label != nullptr) {
               assert(Label->getLHS() != nullptr);

@@ -11,7 +11,7 @@ get_repo () {
   BR=$1
   REPO=$2
   OUTDIR=$3
-  if [ -d "$OUTDIR" ]; then
+  if [ -d "$OUTDIR"/.git ]; then
     git pull 
   else
     git clone -b $BR $REPO $OUTDIR
@@ -27,19 +27,12 @@ get_repo $BRANCH https://github.com/llvm-mirror/clang.git $BASE_DIR/tools/clang
 #get_repo $BRANCH https://github.com/llvm-mirror/libcxxabi.git $BASE_DIR/projects/libcxxabi
 #get_repo $BRANCH https://github.com/llvm-mirror/libunwind.git $BASE_DIR/projects/libunwind
 
-if [ -d "$BUILD_DIR" ]; then
-  pushd .
-  cd $BUILD_DIR
-  cmake $BASE_DIR
-  ninja all
-  ninja install
-  popd
-else
+if [ ! -d "$BUILD_DIR" ]; then
   mkdir $BUILD_DIR
+fi
   pushd .
   cd $BUILD_DIR
   cmake -G Ninja -DLLVM_ENABLE_RTTI=1 -DLLVM_ENABLE_EH=1 -DLLVM_TARGETS_TO_BUILD=X86 -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DLLVM_PARALLEL_LINK_JOBS=4 $BASE_DIR
   ninja all
   ninja install
   popd
-fi
