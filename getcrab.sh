@@ -10,7 +10,7 @@ get_repo () {
   BR=$1
   REPO=$2
   OUTDIR=$3
-  if [ -d "$OUTDIR" ]; then
+  if [ -d "$OUTDIR"/.git ]; then
     pushd .
     cd $OUTDIR
     git pull
