@@ -220,6 +220,9 @@ public:
   bool VisitCallExpr(CallExpr *Call) {
     // This only works if there is a FunctionDecl on the other end of this Call
     Call->dump();
+    FunctionDecl *CalledFunction = Call->getDirectCallee();
+    assert(CalledFunction != nullptr);
+    CalledFunction->dump();
     llvm_unreachable("NIY");
     return true;
   }
@@ -367,6 +370,14 @@ private:
     // Set up the return values.
     crab_entry.havoc(returnV);
     crab_exit.ret(returnV);
+
+    // Set up local copies of the parameters. 
+    SVisitor Se(crab_entry, varPrefix, CCB, SCM, CSM, vfac, Ctx->getSourceManager());
+    for (const auto &p : FD->parameters()) {
+      z_var lp = Se.varFromDecl(p);
+      z_var pp = toP(p);
+      crab_entry.assign(lp, pp);
+    }
 
     for (const auto &b : POCV) {
       basic_block_t &cur = c->get_node(label(*b));
@@ -655,8 +666,8 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
       if (I != CSM.end())
         St = I->second;
       if (St) {
-        //llvm::errs() << "At CRAB label: " << b.label() << ":\n";
-        //St->dump();
+        llvm::errs() << "At CRAB label: " << b.label() << ":\n";
+        St->dump();
         SourceLocation sl = St->getLocStart();
         // Let's look at what kind of Stmt St is.
         if (const IfStmt *If = dyn_cast<const IfStmt>(St)) {
@@ -665,10 +676,11 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
           sl = Cmp->getLBracLoc();
         }
         // Pretty print 'post' at 'St. 
-        //sl.dump(Ctx->getSourceManager());
-        //llvm::errs() << "\n";
+        sl.dump(Ctx->getSourceManager());
+        llvm::errs() << "\n";
         string ex = a.invariants_to_c(post);
-        R.InsertText(sl, "/*"+ex+"*/", true, true);
+        llvm::errs() << ex << "\n";
+        //R.InsertText(sl, "/*"+ex+"*/", true, true);
       } 
     }
   }
