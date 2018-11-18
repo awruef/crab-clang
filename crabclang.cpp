@@ -217,6 +217,13 @@ public:
     return true;
   }
 
+  bool VisitCallExpr(CallExpr *Call) {
+    // This only works if there is a FunctionDecl on the other end of this Call
+    Call->dump();
+    llvm_unreachable("NIY");
+    return true;
+  }
+
   bool VisitBinaryOperator(BinaryOperator *BO) {
     auto uLHS = getResult(BO->getLHS());
     auto uRHS = getResult(BO->getRHS());
@@ -440,21 +447,27 @@ private:
         } else if (const SwitchStmt *Switch = dyn_cast<SwitchStmt>(Term)) {
           // In each of the successor blocks, assume that the crab variable
           // for the terminating statement is equal to the label. 
+          vector<lin_cst_t> cases; 
           auto Cond = S.getResult(Switch->getCond());
           assert(Cond.which() != SVisitor::EMPTY);
           auto CondVar = S.unwrap(Cond);
+
           assert(succs.size() == csuccs.size());
+
           for (unsigned i = 0; i < succs.size(); i++) {
             auto CrabBB = succs[i];
             auto Label = dyn_cast<CaseStmt>(csuccs[i]->getLabel());
             if (Label != nullptr) {
               assert(Label->getLHS() != nullptr);
               auto V = S.unwrap(S.getResult(Label->getLHS()));
-              succs[i]->assume(CondVar == V);
+
+              lin_cst_t c = (CondVar == V);
+              cases.push_back(c);
+              succs[i]->assume(c);
+            } else {
+              for (auto &C : cases)
+                succs[i]->assume(C.negate());
             }
-            // TODO: It would be nice to save up all of the assumptions we
-            //       made and then injected their negations in the 
-            //       'default' case. 
           }
         } else if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(Term)) {
           // Sometimes, the terminator is BinaryOperator for && or ||.
