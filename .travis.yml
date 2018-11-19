@@ -7,14 +7,5 @@ before_install:
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
   - "cp $PWD/crab.obj/include/crab/config.h $PWD/crab-install/crab/include/crab/config.h"
-cache: 
-  timeout: 10000
-  directories: 
-    - "$PWD/llvm38-install" 
-    - "$PWD/crab-install" 
-    - "$PWD/crab.obj" 
-    - "$PWD/crab"
-    - "$PWD/llvm38.obj"
-    - "$PWD/llvm38"
 script: 
   - "CRAB_ROOT=$PWD/crab-install/crab APRON_ROOT=$PWD/crab-install/apron CONFIG=$PWD/llvm38-install/bin/llvm-config make"
