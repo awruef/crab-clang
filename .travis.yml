@@ -6,7 +6,7 @@ before_install:
   - "pushd . && cd $HOME/boost_1_68_0 && ./bootstrap.sh && ./b2 && sudo ./b2 install && popd"
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
-  - "cp $PWD/crab.obj/include/crab/config.h $PWD/crab-install/include/crab/config.h"
+  - "cp $PWD/crab.obj/include/crab/config.h $PWD/crab-install/crab/include/crab/config.h"
 cache: 
   timeout: 10000
   directories: 
@@ -17,4 +17,4 @@ cache:
     - "$PWD/llvm38.obj"
     - "$PWD/llvm38"
 script: 
-  - "APRON_ROOT=$PWD/crab.obj/run/apron CONFIG=$PWD/llvm38-install/bin/llvm-config make"
+  - "CRAB_ROOT=$PWD/crab-install/crab APRON_ROOT=$PWD/crab-install/apron CONFIG=$PWD/llvm38-install/bin/llvm-config make"

@@ -636,7 +636,9 @@ string AnalyzerSwitcher::invariant_to_c(const lin_cst_t &c) {
 }
 
 string AnalyzerSwitcher::expr_to_c(const lin_t &e) {
-  return "";
+  crab_string_os o;
+  o << e;
+  return o.str();
 }
 
 
@@ -671,11 +673,11 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
       auto I = CSM.find(b.label());
       if (I != CSM.end())
         St = I->second;
+
       if (St) {
-        llvm::errs() << "At CRAB label: " << b.label() << ":\n";
-        St->dump();
         SourceLocation sl = St->getLocStart();
         // Let's look at what kind of Stmt St is.
+        St->dump();
         if (const IfStmt *If = dyn_cast<const IfStmt>(St)) {
           sl = If->getThen()->getLocStart();
         } else if (const CompoundStmt *Cmp = dyn_cast<const CompoundStmt>(St)) {
@@ -686,7 +688,7 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
         llvm::errs() << "\n";
         string ex = a.invariants_to_c(post);
         llvm::errs() << ex << "\n";
-        //R.InsertText(sl, "/*"+ex+"*/", true, true);
+        //R.InsertTextBefore(sl, "/*"+ex+"*/\n");
       } 
     }
   }
