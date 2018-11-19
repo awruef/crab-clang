@@ -41,7 +41,7 @@ namespace crab {
     typedef string basic_block_label_t;
     template<> inline string get_label_str(string e) { return e; }
 
-    typedef cfg::Cfg<basic_block_label_t, varname_t, ikos::z_number> cfg_t;
+    typedef cfg::cfg<basic_block_label_t, varname_t, ikos::z_number> cfg_t;
     typedef cfg::cfg_ref<cfg_t> cfg_ref_t;
     typedef cfg::cfg_rev<cfg_ref_t> cfg_rev_t;
     typedef cfg_t::basic_block_t basic_block_t;
