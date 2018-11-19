@@ -6,7 +6,9 @@ before_install:
   - "pushd . && cd $HOME/boost_1_68_0 && ./bootstrap.sh && ./b2 && sudo ./b2 install && popd"
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
+  - "cp $PWD/crab.obj/include/crab/config.h $PWD/crab-install/include/crab/config.h"
 cache: 
+  timeout: 10000
   directories: 
     - "$PWD/llvm38-install" 
     - "$PWD/crab-install" 
