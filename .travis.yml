@@ -1,6 +1,6 @@
 language: cpp
 before_install: 
-  - "sudo apt-get install ninja-build"
+  - "sudo apt-get install ninja-build libboost-all-dev libgmp-dev libmpfr-dev"
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
 cache: 
