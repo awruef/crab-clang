@@ -674,19 +674,18 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
 
       if (St) {
         SourceLocation sl = St->getLocStart();
-        // Let's look at what kind of Stmt St is.
-        St->dump();
-        if (const IfStmt *If = dyn_cast<const IfStmt>(St)) {
-          sl = If->getThen()->getLocStart();
-        } else if (const CompoundStmt *Cmp = dyn_cast<const CompoundStmt>(St)) {
-          sl = Cmp->getLBracLoc();
+        for (const auto &p : Ctx->getParents(*St)) {
+          if (const IfStmt *If = dyn_cast<const IfStmt>(p.get<Stmt>())) {
+            if (If->getCond() == St) {
+              sl = If->getLocStart();
+              break;
+            }
+          }
         }
+
         // Pretty print 'post' at 'St. 
-        sl.dump(Ctx->getSourceManager());
-        llvm::errs() << "\n";
         string ex = a.invariants_to_c(post);
-        llvm::errs() << ex << "\n";
-        //R.InsertTextBefore(sl, "/*"+ex+"*/\n");
+        R.InsertText(sl, "/*"+ex+"*/\n", false, true);
       } 
     }
   }
