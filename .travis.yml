@@ -3,7 +3,7 @@ before_install:
   - "sudo apt-get install ninja-build libgmp-dev libmpfr-dev"
   - "wget -O $HOME/boost_1_68_0.tar.gz https://dl.bintray.com/boostorg/release/1.68.0/source/boost_1_68_0.tar.gz"
   - "tar xfz $HOME/boost_1_68_0.tar.gz -C $HOME"
-  - "cd $HOME/boost_1_68_0 && ./bootstrap.sh && ./b2 && ./b2 install"
+  - "cd $HOME/boost_1_68_0 && ./bootstrap.sh && ./b2 && sudo ./b2 install"
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
 cache: 
