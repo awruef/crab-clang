@@ -1,11 +1,10 @@
 language: cpp
 before_install: 
-  - "sudo apt-get install ninja-build libgmp-dev libmpfr-dev"
+  - "sudo apt-get install ninja-build libgmp-dev libmpfr-dev llvm-dev libclang-dev"
   - "wget -O $HOME/boost_1_68_0.tar.gz https://dl.bintray.com/boostorg/release/1.68.0/source/boost_1_68_0.tar.gz"
   - "tar xfz $HOME/boost_1_68_0.tar.gz -C $HOME"
   - "pushd . && cd $HOME/boost_1_68_0 && ./bootstrap.sh && ./b2 && sudo ./b2 install && popd"
-  - "./getllvm.sh \"release_60\" $PWD/llvm60 $PWD/llvm60.obj $PWD/llvm60-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
   - "cp $PWD/crab.obj/include/crab/config.h $PWD/crab-install/crab/include/crab/config.h"
 script: 
-  - "CRAB_ROOT=$PWD/crab-install/crab APRON_ROOT=$PWD/crab-install/apron CONFIG=$PWD/llvm60-install/bin/llvm-config make"
+  - "CRAB_ROOT=$PWD/crab-install/crab APRON_ROOT=$PWD/crab-install/apron CONFIG=llvm-config-6.0 make"
