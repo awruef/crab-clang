@@ -1,12 +1,12 @@
 language: cpp
 before_install: 
   - "sudo apt-get install ninja-build libgmp-dev libmpfr-dev"
+  - "wget -O $PWD/boost_1_68_0.tar.gz $PWD/ https://dl.bintray.com/boostorg/release/1.68.0/source/boost_1_68_0.tar.gz"
+  - "tar xvfz $PWD/boost_1_68_0.tar.gz"
   - "$PWD/boost_1_68_0/b2 -d0"
   - "$PWD/boost_1_68_0/b2 install -d0"
   - "./getllvm.sh \"release_38\" $PWD/llvm38 $PWD/llvm38.obj $PWD/llvm38-install"
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
-  - "wget -O $PWD/boost_1_68_0.tar.gz $PWD/ https://dl.bintray.com/boostorg/release/1.68.0/source/boost_1_68_0.tar.gz"
-  - "tar xvfz $PWD/boost_1_68_0.tar.gz"
 cache: 
   directories: 
     - "$PWD/llvm38-install" 
