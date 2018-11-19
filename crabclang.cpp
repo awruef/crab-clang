@@ -28,8 +28,6 @@
 #include <boost/variant.hpp>
 #include <boost/bimap.hpp>
 
-#include <optional>
-
 using namespace std;
 
 // Define types for crab. 
