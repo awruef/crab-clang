@@ -675,11 +675,16 @@ void CFGBuilderConsumer::HandleTranslationUnit(ASTContext &C) {
       if (St) {
         SourceLocation sl = St->getLocStart();
         for (const auto &p : Ctx->getParents(*St)) {
+          const Stmt *tmp = nullptr;
           if (const IfStmt *If = dyn_cast<const IfStmt>(p.get<Stmt>())) {
-            if (If->getCond() == St) {
-              sl = If->getLocStart();
-              break;
-            }
+            tmp = If->getCond();
+          } else if (const WhileStmt *While = dyn_cast<const WhileStmt>(p.get<Stmt>())) {
+            tmp = While->getCond();
+          }
+
+          if (tmp && tmp == St) {
+            sl = tmp->getLocStart();
+            break;
           }
         }
 

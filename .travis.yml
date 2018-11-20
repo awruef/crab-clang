@@ -7,4 +7,4 @@ before_install:
   - "./getcrab.sh $PWD/crab $PWD/crab.obj $PWD/crab-install"
   - "cp $PWD/crab.obj/include/crab/config.h $PWD/crab-install/crab/include/crab/config.h"
 script: 
-  - "CRAB_ROOT=$PWD/crab-install/crab APRON_ROOT=$PWD/crab-install/apron CONFIG=llvm-config-6.0 make"
+  - "CRAB_ROOT=$PWD/crab-install/crab APRON_ROOT=$PWD/crab-install/apron CONFIG=llvm-config make"
